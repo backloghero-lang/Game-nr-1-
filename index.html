@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <title>Wojfer 67 - Salon Nocą</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #0a0608; font-family: "Courier New", monospace; }
+    canvas { display: block; margin: 0 auto; image-rendering: pixelated; }
+    #info { color: #ffb347; text-align: center; padding: 6px; font-size: 12px; letter-spacing: 1px; }
+  </style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+<div id="info">STRZALKI = ruch &nbsp; SPACJA = skok &nbsp; R = restart</div>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+canvas.width = 800;
+canvas.height = 480;
+
+// ===== ASSETS =====
+const ASSETS = {
+  player_idle: "img/player_idle.png",
+  player_run:  "img/player_run.png",
+  player_jump: "img/player_jump.png",
+  player_fall: "img/player_fall.png",
+  brick:       "img/brick.png",
+  coin:        "img/coin.png",
+  heart:       "img/heart.png",
+  crab:        "img/crab.png",
+  rat:         "img/rat.png",
+  barrel:      "img/barrel.png",
+  ninja:       "img/ninja.png",
+  spikes:      "img/spikes.png",
+  qblock:      "img/qblock.png",
+  crate:       "img/crate.png",
+  door:        "img/door.png",
+  window_:     "img/window.png",
+  lamp:        "img/lamp.png",
+  poster:      "img/poster.png",
+  boxes2:      "img/boxes2.png",
+  boxes3:      "img/boxes3.png",
+  couch:       "img/couch.png",
+  coatrack:    "img/coatrack.png",
+  plant:       "img/plant.png",
+  pot:         "img/pot.png"
+};
+const images = {};
+function loadAssets(cb) {
+  const keys = Object.keys(ASSETS);
+  let left = keys.length;
+  for (const k of keys) {
+    const img = new Image();
+    img.onload  = () => { images[k] = img; if (--left === 0) cb(); };
+    img.onerror = () => { console.warn("brak", ASSETS[k]); if (--left === 0) cb(); };
+    img.src = ASSETS[k];
+  }
+}
+
+// ===== TILEMAP =====
+// . puste, # cegla, c skrzynka, q ?-blok, S kolce
+// C moneta, K krab, R szczur, B beczka, N ninja
+// F drzwi (meta), P start
+// dekoracje (tylko wizualne, niesolidne):
+// w okno, l lampa, o plakat HELP, x kartonyx2, y kartonyx3, u kanapa, t wieszak, p doniczka
+const TILE = 40;
+const MAP = [
+  "................................................................................",
+  "................................................................................",
+  "................................................................................",
+  "................l...........................l..................................",
+  ".......w........................w..............................................",
+  "....................o..............................p...........................",
+  ".................###.....................c#####c.......##......................",
+  "..................................q.............................###............",
+  ".........C.................C.....C.C.C..................C.C.C..................",
+  ".......####.......##......####..........##....####..S............####.....F....",
+  "......................................................##......................#",
+  "....P............t................................u.....x.....y................",
+  "..............K............R.........K........N.........B......................",
+  "################################################################################",
+  "################################################################################"
+];
+
+const worldWidth  = MAP[0].length * TILE;
+const worldHeight = MAP.length * TILE;
+
+let player, coins, enemies, hazards, decor, flag, solids, score, lives, won, dead;
+
+function buildLevel() {
+  solids = []; coins = []; enemies = []; hazards = []; decor = []; flag = null;
+  for (let r = 0; r < MAP.length; r++) {
+    for (let c = 0; c < MAP[r].length; c++) {
+      const ch = MAP[r][c];
+      const x = c * TILE, y = r * TILE;
+      switch (ch) {
+        case "#": solids.push({ x, y, w: TILE, h: TILE, kind: "brick" }); break;
+        case "c": solids.push({ x, y, w: TILE, h: TILE, kind: "crate" }); break;
+        case "q": solids.push({ x, y, w: TILE, h: TILE, kind: "qblock" }); break;
+        case "S": hazards.push({ x: x + 4, y: y + TILE - 12, w: TILE - 8, h: 12, kind: "spikes" });
+                  decor.push({ x: x, y: y + TILE - 18, kind: "spikes" }); break;
+        case "C": coins.push({ x: x + 12, y: y + 12, w: 16, h: 16, taken: false, t: 0 }); break;
+        case "K": enemies.push(makeEnemy(x, y, "crab",   34, 22, -1.2)); break;
+        case "R": enemies.push(makeEnemy(x, y, "rat",    34, 28, -1.5)); break;
+        case "B": enemies.push(makeEnemy(x, y, "barrel", 34, 30, -1.0)); break;
+        case "N": enemies.push(makeEnemy(x, y, "ninja",  30, 38, -1.8)); break;
+        case "F": flag = { x, y: y - TILE, w: TILE, h: TILE * 2 }; break;
+        case "P": player = makePlayer(x, y); break;
+        case "w": decor.push({ x, y, kind: "window" }); break;
+        case "l": decor.push({ x, y, kind: "lamp" }); break;
+        case "o": decor.push({ x, y, kind: "poster" }); break;
+        case "p": decor.push({ x, y, kind: "pot" }); break;
+        case "x": decor.push({ x, y, kind: "boxes2" }); break;
+        case "y": decor.push({ x, y, kind: "boxes3" }); break;
+        case "u": decor.push({ x, y, kind: "couch" }); break;
+        case "t": decor.push({ x, y, kind: "coatrack" }); break;
+      }
+    }
+  }
+}
+
+function makePlayer(x, y) {
+  return { x: x + 4, y: y - 8, w: 28, h: 44, vx: 0, vy: 0,
+           speed: 4, jump: -12, grounded: false, dir: 1, walk: 0, state: "idle",
+           jumpsLeft: 2, jumpHeld: false };
+}
+
+function makeEnemy(x, y, kind, w, h, vx) {
+  return { x, y: y + (TILE - h), w, h, vx, vy: 0, alive: true, kind, t: 0 };
+}
+
+const gravity = 0.6;
+const camera = { x: 0, y: 0 };
+
+const keys = {};
+document.addEventListener("keydown", e => {
+  keys[e.code] = true;
+  if (e.code === "KeyR") resetGame();
+});
+document.addEventListener("keyup", e => keys[e.code] = false);
+
+// ===== AUDIO =====
+const Audio = (() => {
+  let actx;
+  function ensure() { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); }
+  function beep(freq, dur, type = "square", vol = 0.05) {
+    try {
+      ensure();
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = type; o.frequency.value = freq;
+      g.gain.value = vol;
+      o.connect(g); g.connect(actx.destination);
+      o.start();
+      g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
+      o.stop(actx.currentTime + dur);
+    } catch (e) {}
+  }
+  return {
+    jump:  () => beep(380, 0.10, "square"),
+    coin:  () => beep(880, 0.08, "triangle", 0.07),
+    stomp: () => beep(140, 0.18, "sawtooth"),
+    die:   () => beep(90,  0.5,  "sawtooth", 0.08),
+    win:   () => { beep(660, 0.15); setTimeout(() => beep(880, 0.25), 150); }
+  };
+})();
+
+function aabb(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function moveAndCollide(e) {
+  e.grounded = false;
+  e.x += e.vx;
+  for (const s of solids) {
+    if (aabb(e, s)) {
+      if (e.vx > 0) e.x = s.x - e.w;
+      else if (e.vx < 0) e.x = s.x + s.w;
+      if (e.bounceOnWall) e.vx = -e.vx;
+    }
+  }
+  e.y += e.vy;
+  for (const s of solids) {
+    if (aabb(e, s)) {
+      if (e.vy > 0) { e.y = s.y - e.h; e.vy = 0; e.grounded = true; }
+      else if (e.vy < 0) { e.y = s.y + s.h; e.vy = 0; }
+    }
+  }
+}
+
+let tick = 0;
+function update() {
+  tick++;
+  if (won || dead) return;
+
+  if (keys["ArrowLeft"])       { player.vx = -player.speed; player.dir = -1; }
+  else if (keys["ArrowRight"]) { player.vx =  player.speed; player.dir =  1; }
+  else player.vx = 0;
+
+  const jumpKey = keys["Space"] || keys["ArrowUp"];
+  if (jumpKey && !player.jumpHeld && player.jumpsLeft > 0) {
+    player.vy = player.jumpsLeft === 2 ? player.jump : player.jump * 0.85;
+    player.grounded = false;
+    player.jumpsLeft--;
+    Audio.jump();
+  }
+  player.jumpHeld = jumpKey;
+
+  player.vy += gravity;
+  if (player.vy > 16) player.vy = 16;
+  moveAndCollide(player);
+
+  // reset podwojnego skoku gdy na ziemi
+  if (player.grounded) player.jumpsLeft = 2;
+
+  // stan animacji
+  if (!player.grounded) player.state = player.vy < 0 ? "jump" : "fall";
+  else if (Math.abs(player.vx) > 0.1) { player.state = "run"; player.walk += 0.25; }
+  else player.state = "idle";
+
+  if (player.x < 0) player.x = 0;
+  if (player.x + player.w > worldWidth) player.x = worldWidth - player.w;
+  if (player.y > worldHeight) die();
+
+  // wrogowie
+  for (const en of enemies) {
+    if (!en.alive) continue;
+    en.t += 0.15;
+    en.vy += gravity;
+    if (en.vy > 12) en.vy = 12;
+    en.bounceOnWall = true;
+    moveAndCollide(en);
+    en.bounceOnWall = false;
+
+    if (aabb(player, en)) {
+      if (player.vy > 0 && player.y + player.h - en.y < 22) {
+        en.alive = false;
+        player.vy = -9;
+        score += 100;
+        Audio.stomp();
+      } else {
+        die();
+      }
+    }
+  }
+
+  // kolce / pulapki
+  for (const h of hazards) {
+    if (aabb(player, h)) die();
+  }
+
+  // monety
+  for (const c of coins) {
+    if (!c.taken) {
+      c.t += 0.12;
+      if (aabb(player, c)) {
+        c.taken = true;
+        score += 50;
+        Audio.coin();
+      }
+    }
+  }
+
+  if (flag && aabb(player, flag)) {
+    won = true;
+    Audio.win();
+  }
+
+  camera.x = player.x + player.w / 2 - canvas.width / 2;
+  camera.y = player.y + player.h / 2 - canvas.height / 2;
+  if (camera.x < 0) camera.x = 0;
+  if (camera.x > worldWidth - canvas.width) camera.x = worldWidth - canvas.width;
+  if (camera.y < 0) camera.y = 0;
+  if (camera.y > worldHeight - canvas.height) camera.y = worldHeight - canvas.height;
+}
+
+function die() {
+  if (dead) return;
+  dead = true;
+  lives--;
+  Audio.die();
+  setTimeout(() => {
+    if (lives <= 0) resetGame();
+    else respawn();
+  }, 800);
+}
+function respawn() {
+  for (let r = 0; r < MAP.length; r++)
+    for (let c = 0; c < MAP[r].length; c++)
+      if (MAP[r][c] === "P") player = makePlayer(c * TILE, r * TILE);
+  dead = false;
+}
+function resetGame() {
+  score = 0; lives = 3; won = false; dead = false;
+  buildLevel();
+}
+
+// ===== RYSOWANIE =====
+function drawSprite(key, x, y, w, h, flipX = false) {
+  const img = images[key];
+  if (!img) { ctx.fillStyle = "#f0f"; ctx.fillRect(x, y, w, h); return; }
+  if (flipX) {
+    ctx.save();
+    ctx.translate(x + w, y);
+    ctx.scale(-1, 1);
+    ctx.drawImage(img, 0, 0, w, h);
+    ctx.restore();
+  } else {
+    ctx.drawImage(img, x, y, w, h);
+  }
+}
+
+function drawBackground() {
+  // gradient sciany
+  const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  g.addColorStop(0, "#1a1228");
+  g.addColorStop(0.6, "#0f0a18");
+  g.addColorStop(1, "#05030a");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // kratka tapety (parallax)
+  ctx.save();
+  ctx.translate(-camera.x * 0.3, 0);
+  ctx.fillStyle = "rgba(80,40,50,0.10)";
+  for (let yy = 0; yy < canvas.height; yy += 40) {
+    for (let xx = -40; xx < worldWidth; xx += 40) {
+      ctx.fillRect(xx + ((yy / 40) % 2) * 20, yy + 20, 2, 2);
+    }
+  }
+  ctx.restore();
+}
+
+function drawDecor(d) {
+  const k = d.kind;
+  if (k === "window") drawSprite("window_", d.x, d.y, 90, 110);
+  else if (k === "lamp") drawSprite("lamp", d.x - 30, d.y - 20, 110, 140);
+  else if (k === "poster") drawSprite("poster", d.x, d.y, 70, 90);
+  else if (k === "pot")    drawSprite("pot", d.x + 8, d.y + TILE - 28, 28, 28);
+  else if (k === "boxes2") drawSprite("boxes2", d.x, d.y - 40, 70, 90);
+  else if (k === "boxes3") drawSprite("boxes3", d.x, d.y - 60, 70, 110);
+  else if (k === "couch")  drawSprite("couch", d.x - 10, d.y - 10, 130, 80);
+  else if (k === "coatrack") drawSprite("coatrack", d.x, d.y - 80, 50, 130);
+  else if (k === "spikes") drawSprite("spikes", d.x, d.y, TILE, 18);
+}
+
+function drawSolid(s) {
+  if (s.kind === "brick")  drawSprite("brick", s.x, s.y, s.w, s.h);
+  else if (s.kind === "crate")  drawSprite("crate", s.x, s.y, s.w, s.h);
+  else if (s.kind === "qblock") drawSprite("qblock", s.x, s.y, s.w, s.h);
+}
+
+function drawCoin(c) {
+  const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+  const grad = ctx.createRadialGradient(cx, cy, 1, cx, cy, 18);
+  grad.addColorStop(0, "rgba(255,220,120,0.45)");
+  grad.addColorStop(1, "rgba(255,180,60,0)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(c.x - 8, c.y - 8, c.w + 16, c.h + 16);
+  const bob = Math.sin(c.t) * 2;
+  drawSprite("coin", c.x - 4, c.y - 4 + bob, 24, 24);
+}
+
+function drawEnemy(en) {
+  const bob = Math.sin(en.t) * 1;
+  drawSprite(en.kind, en.x, en.y + bob, en.w, en.h, en.vx > 0);
+}
+
+function drawPlayer(p) {
+  const key = "player_" + p.state;
+  drawSprite(key, p.x - 6, p.y - 4, p.w + 12, p.h + 4, p.dir < 0);
+}
+
+function drawFlag(f) {
+  drawSprite("door", f.x - 4, f.y, f.w + 8, f.h);
+  // poswiata pod drzwiami
+  ctx.fillStyle = "rgba(255,180,80,0.4)";
+  ctx.fillRect(f.x, f.y + f.h - 6, f.w, 4);
+}
+
+function drawLightCones() {
+  // stozki swiatla z lamp
+  ctx.globalCompositeOperation = "lighter";
+  for (const d of decor) {
+    if (d.kind !== "lamp") continue;
+    const lx = d.x + 25, ly = d.y + 60;
+    const grad = ctx.createRadialGradient(lx, ly, 8, lx, ly, 240);
+    grad.addColorStop(0,    "rgba(255,200,120,0.40)");
+    grad.addColorStop(0.4,  "rgba(255,170,80,0.18)");
+    grad.addColorStop(1,    "rgba(255,140,60,0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(lx, ly, 240, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalCompositeOperation = "source-over";
+}
+
+function draw() {
+  drawBackground();
+
+  ctx.save();
+  ctx.translate(-Math.floor(camera.x), -Math.floor(camera.y));
+
+  // tylne dekoracje (okna, plakaty)
+  for (const d of decor) {
+    if (d.kind === "window" || d.kind === "poster") drawDecor(d);
+  }
+
+  // platformy / klocki
+  for (const s of solids) drawSolid(s);
+
+  // kolce
+  for (const d of decor) if (d.kind === "spikes") drawDecor(d);
+
+  // dekoracje przed platformami (meble, kartony, lampy)
+  for (const d of decor) {
+    if (["couch", "boxes2", "boxes3", "coatrack", "pot", "lamp"].includes(d.kind)) drawDecor(d);
+  }
+
+  // monety
+  for (const c of coins) if (!c.taken) drawCoin(c);
+
+  // wrogowie
+  for (const en of enemies) if (en.alive) drawEnemy(en);
+
+  // meta
+  if (flag) drawFlag(flag);
+
+  // gracz
+  if (!dead) drawPlayer(player);
+
+  // swiatla
+  drawLightCones();
+
+  // delikatna winieta
+  ctx.fillStyle = "rgba(0,0,0,0.20)";
+  ctx.fillRect(camera.x, camera.y, canvas.width, canvas.height);
+
+  ctx.restore();
+
+  drawHUD();
+
+  if (won) drawCenter("WOLNOSC! (R = restart)", "#ffb347");
+  else if (dead && lives <= 0) drawCenter("ZOSTALES W SALONIE (R = restart)", "#ff5544");
+}
+
+function drawHUD() {
+  ctx.fillStyle = "rgba(20,12,8,0.92)";
+  ctx.fillRect(0, 0, canvas.width, 36);
+  ctx.fillStyle = "#3a2410";
+  ctx.fillRect(0, 34, canvas.width, 2);
+
+  // serca
+  for (let i = 0; i < 3; i++) {
+    if (images.heart) {
+      ctx.globalAlpha = i < lives ? 1 : 0.25;
+      ctx.drawImage(images.heart, 10 + i * 26, 7, 22, 22);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // moneta + licznik
+  if (images.coin) ctx.drawImage(images.coin, 110, 8, 20, 20);
+
+  ctx.fillStyle = "#ffb347";
+  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.shadowColor = "#ff7700";
+  ctx.shadowBlur = 6;
+  ctx.fillText("x " + Math.floor(score / 50), 134, 23);
+  ctx.fillText("WYNIK: " + String(score).padStart(5, "0"), 220, 23);
+  ctx.fillText("WOJFER 67", 380, 23);
+  ctx.fillText("SALON NOCA", canvas.width - 130, 23);
+  ctx.shadowBlur = 0;
+}
+
+function drawCenter(text, color) {
+  ctx.fillStyle = "rgba(0,0,0,0.78)";
+  ctx.fillRect(0, canvas.height / 2 - 30, canvas.width, 60);
+  ctx.fillStyle = color;
+  ctx.font = "bold 22px 'Courier New', monospace";
+  ctx.textAlign = "center";
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12;
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 8);
+  ctx.shadowBlur = 0;
+  ctx.textAlign = "start";
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+loadAssets(() => { resetGame(); loop(); });
+</script>
+
+</body>
+</html>
