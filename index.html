@@ -45,7 +45,11 @@ const ASSETS = {
   couch:       "img/couch.png",
   coatrack:    "img/coatrack.png",
   plant:       "img/plant.png",
-  pot:         "img/pot.png"
+  pot:         "img/pot.png",
+  lift_low:    "img/lift_press_low.png",
+  lift_mid:    "img/lift_press_mid.png",
+  lift_high:   "img/lift_press_high.png",
+  lift_strain: "img/lift_strain.png"
 };
 const images = {};
 function loadAssets(cb) {
@@ -62,35 +66,36 @@ function loadAssets(cb) {
 // ===== TILEMAP =====
 // . puste, # cegla, c skrzynka, q ?-blok, S kolce
 // C moneta, K krab, R szczur, B beczka, N ninja
-// F drzwi (meta), P start
-// dekoracje (tylko wizualne, niesolidne):
-// w okno, l lampa, o plakat HELP, x kartonyx2, y kartonyx3, u kanapa, t wieszak, p doniczka
+// F drzwi (meta - otwierane po pokonaniu bossa), P start, Z boss kanapa
+// dekoracje: w okno, l lampa, o plakat HELP, x kartonyx2, y kartonyx3, t wieszak, p doniczka
 const TILE = 40;
 const MAP = [
-  "................................................................................",
-  "................................................................................",
-  "................................................................................",
-  "................l...........................l..................................",
-  ".......w........................w..............................................",
-  "....................o..............................p...........................",
-  ".................###.....................c#####c.......##......................",
-  "..................................q.............................###............",
-  ".........C.................C.....C.C.C..................C.C.C..................",
-  ".......####.......##......####..........##....####..S............####.....F....",
-  "......................................................##......................#",
-  "....P............t................................u.....x.....y................",
-  "..............K............R.........K........N.........B......................",
-  "################################################################################",
-  "################################################################################"
+  "..................................................................................................................................",
+  "..................................................................................................................................",
+  "..................................................................................................................................",
+  "..............l..........................l...................l............................l....................l................",
+  ".......w........................w..........................w....................................w..............................",
+  "....................o..............................p..............................o........................................o...",
+  ".................###..................c#####c......###...................q####q.....................###..........................",
+  "..................................q................................................................................................",
+  ".........C.................C.....C.C.C..............C.C.C..C..C..C............C.C.C......C.C.C....................C.C.C..........",
+  ".......####.......##.....####.........##....####..S....####.......##....S....####.....##.....S####.......##.S.S####....##........F",
+  "......................................................##.................................................................##.....#",
+  "....P..........t..........................p.....................t...................p..............x.....y...........Z..........#",
+  "..............K............R........K........N.........B....K..........R.......N.........K.........B.......N.....................",
+  "########.....##############.######.##############.####.##.##############.##############.##############.############################",
+  "########.....##############.######.##############.####.##.##############.##############.##############.############################"
 ];
 
 const worldWidth  = MAP[0].length * TILE;
 const worldHeight = MAP.length * TILE;
 
-let player, coins, enemies, hazards, decor, flag, solids, score, lives, won, dead;
+let player, coins, enemies, hazards, decor, flag, solids, score, lives, won, dead, boss;
+
+const BOSS_HP = 3; // ile razy podniesc
 
 function buildLevel() {
-  solids = []; coins = []; enemies = []; hazards = []; decor = []; flag = null;
+  solids = []; coins = []; enemies = []; hazards = []; decor = []; flag = null; boss = null;
   for (let r = 0; r < MAP.length; r++) {
     for (let c = 0; c < MAP[r].length; c++) {
       const ch = MAP[r][c];
@@ -114,8 +119,9 @@ function buildLevel() {
         case "p": decor.push({ x, y, kind: "pot" }); break;
         case "x": decor.push({ x, y, kind: "boxes2" }); break;
         case "y": decor.push({ x, y, kind: "boxes3" }); break;
-        case "u": decor.push({ x, y, kind: "couch" }); break;
         case "t": decor.push({ x, y, kind: "coatrack" }); break;
+        case "Z": boss = { x: x - 30, y: y - 20, w: 130, h: 80, hp: BOSS_HP, alive: true,
+                            t: 0, hitFlash: 0, baseY: y - 20, cooldown: 0, liftPhase: 0 }; break;
       }
     }
   }
@@ -170,9 +176,24 @@ function aabb(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
+function hasGroundAhead(e) {
+  const checkX = e.vx > 0 ? e.x + e.w + 2 : e.x - 2;
+  const checkY = e.y + e.h + 4;
+  for (const s of solids) {
+    if (checkX >= s.x && checkX < s.x + s.w &&
+        checkY >= s.y && checkY < s.y + s.h) return true;
+  }
+  return false;
+}
+
 function moveAndCollide(e) {
   e.grounded = false;
   e.x += e.vx;
+  // odbicie od krawedzi swiata
+  if (e.bounceOnWall) {
+    if (e.x < 0) { e.x = 0; e.vx = -e.vx; }
+    else if (e.x + e.w > worldWidth) { e.x = worldWidth - e.w; e.vx = -e.vx; }
+  }
   for (const s of solids) {
     if (aabb(e, s)) {
       if (e.vx > 0) e.x = s.x - e.w;
@@ -194,12 +215,16 @@ function update() {
   tick++;
   if (won || dead) return;
 
-  if (keys["ArrowLeft"])       { player.vx = -player.speed; player.dir = -1; }
+  if (player.state === "lift") {
+    player.vx = 0;
+  } else if (keys["ArrowLeft"])       { player.vx = -player.speed; player.dir = -1; }
   else if (keys["ArrowRight"]) { player.vx =  player.speed; player.dir =  1; }
   else player.vx = 0;
 
   const jumpKey = keys["Space"] || keys["ArrowUp"];
-  if (jumpKey && !player.jumpHeld && player.jumpsLeft > 0) {
+  if (player.state === "lift") {
+    // brak skoku w trakcie wyciskania
+  } else if (jumpKey && !player.jumpHeld && player.jumpsLeft > 0) {
     player.vy = player.jumpsLeft === 2 ? player.jump : player.jump * 0.85;
     player.grounded = false;
     player.jumpsLeft--;
@@ -207,17 +232,21 @@ function update() {
   }
   player.jumpHeld = jumpKey;
 
-  player.vy += gravity;
-  if (player.vy > 16) player.vy = 16;
-  moveAndCollide(player);
+  if (player.state !== "lift") {
+    player.vy += gravity;
+    if (player.vy > 16) player.vy = 16;
+    moveAndCollide(player);
+  }
 
   // reset podwojnego skoku gdy na ziemi
   if (player.grounded) player.jumpsLeft = 2;
 
-  // stan animacji
-  if (!player.grounded) player.state = player.vy < 0 ? "jump" : "fall";
-  else if (Math.abs(player.vx) > 0.1) { player.state = "run"; player.walk += 0.25; }
-  else player.state = "idle";
+  // stan animacji (nie zmieniaj jesli wycisk)
+  if (player.state !== "lift") {
+    if (!player.grounded) player.state = player.vy < 0 ? "jump" : "fall";
+    else if (Math.abs(player.vx) > 0.1) { player.state = "run"; player.walk += 0.18; }
+    else player.state = "idle";
+  }
 
   if (player.x < 0) player.x = 0;
   if (player.x + player.w > worldWidth) player.x = worldWidth - player.w;
@@ -232,6 +261,8 @@ function update() {
     en.bounceOnWall = true;
     moveAndCollide(en);
     en.bounceOnWall = false;
+    // odbicie od krawedzi przepasci
+    if (en.grounded && !hasGroundAhead(en)) en.vx = -en.vx;
 
     if (aabb(player, en)) {
       if (player.vy > 0 && player.y + player.h - en.y < 22) {
@@ -262,7 +293,49 @@ function update() {
     }
   }
 
-  if (flag && aabb(player, flag)) {
+  // boss - wyciskanie jak hantle
+  if (boss && boss.alive) {
+    boss.t += 0.08;
+    if (boss.cooldown > 0) boss.cooldown--;
+    // start wyciskania - dotkniecie bossa (w skoku lub z boku) gdy nie na cooldownie
+    if (player.state !== "lift" && boss.cooldown === 0 && aabb(player, boss)) {
+      player.state = "lift";
+      player.liftTime = 90;            // 1.5s
+      player.vx = 0; player.vy = 0;
+      player.grounded = true;
+      // wyrownaj gracza pod boss
+      player.x = boss.x + (boss.w - player.w) / 2;
+      player.y = boss.baseY + boss.h - player.h + 4;
+      Audio.jump();
+    }
+  }
+
+  // animacja wyciskania
+  if (player.state === "lift" && boss && boss.alive) {
+    player.liftTime--;
+    const t = 90 - player.liftTime;
+    let lift = 0;
+    if (t < 30)      lift = t / 30;            // pchanie w gore
+    else if (t < 60) lift = 1 + Math.sin((t - 30) * 0.4) * 0.05; // trzymanie z dygotem
+    else             lift = (90 - t) / 30;     // opuszczanie
+    boss.y = boss.baseY - 55 * lift;
+    boss.liftPhase = lift;
+    if (player.liftTime <= 0) {
+      boss.y = boss.baseY;
+      boss.liftPhase = 0;
+      boss.hp--;
+      boss.hitFlash = 20;
+      score += 300;
+      Audio.stomp();
+      boss.cooldown = 30; // pol sekundy zanim mozna znow
+      player.state = "idle";
+      player.vy = -6; // maly odskok
+      if (boss.hp <= 0) { boss.alive = false; Audio.win(); }
+    }
+  }
+
+  // drzwi otwarte tylko gdy boss pokonany
+  if (flag && aabb(player, flag) && (!boss || !boss.alive)) {
     won = true;
     Audio.win();
   }
@@ -368,15 +441,118 @@ function drawEnemy(en) {
 }
 
 function drawPlayer(p) {
-  const key = "player_" + p.state;
-  drawSprite(key, p.x - 6, p.y - 4, p.w + 12, p.h + 4, p.dir < 0);
+  let key = "player_" + p.state;
+  let yOff = -4;
+  let xScale = 1;
+  let yScale = 1;
+  // animacja biegu
+  if (p.state === "run") {
+    const phase = Math.floor(p.walk) % 4;
+    key = (phase === 0 || phase === 2) ? "player_run" : "player_idle";
+    yOff = -4 + (phase === 1 || phase === 3 ? 2 : 0);
+    xScale = (phase === 0 || phase === 2) ? 1.0 : 0.96;
+  }
+  // animacja biegu - normalny render
+  if (p.state !== "lift") {
+    const w = (p.w + 12) * xScale;
+    const h = (p.h + 4) * yScale;
+    const x = p.x - 6 + ((p.w + 12) - w) / 2;
+    drawSprite(key, x, p.y + yOff, w, h, p.dir < 0);
+    return;
+  }
+
+  // === ANIMACJA WYCISKANIA - dedykowane klatki Wojfer+kanapa ===
+  const lp = boss ? boss.liftPhase : 0;
+  let liftKey;
+  if (lp < 0.25)      liftKey = "lift_low";    // dopiero podnosi
+  else if (lp < 0.55) liftKey = "lift_mid";    // w polowie
+  else if (lp < 0.92) liftKey = "lift_high";   // wycisniete
+  else                liftKey = "lift_strain"; // dygot na szczycie
+  // alternuj strain z high dla efektu drzenia
+  if (lp >= 0.92 && Math.floor(tick / 4) % 2 === 0) liftKey = "lift_high";
+
+  // sprite proporcje ~134x300, skala do gracza (28w, 44h)
+  // wysokosc calego sprite'a = 5x wysokosc gracza
+  const liftH = p.h * 5.5;
+  const liftW = liftH * (134 / 300);
+  // gracz w sprite'cie znajduje sie na dole (~stopy w dolnej krawedzi)
+  const liftX = p.x + p.w / 2 - liftW / 2;
+  const liftY = p.y + p.h - liftH;
+  // dygot
+  let shakeX = 0, shakeY = 0;
+  if (lp >= 0.92) {
+    shakeX = Math.sin(tick * 0.9) * 1.5;
+    shakeY = Math.cos(tick * 1.1) * 1;
+  }
+  drawSprite(liftKey, liftX + shakeX, liftY + shakeY, liftW, liftH, p.dir < 0);
+
+  // krople potu lecace na boki
+  if (lp > 0.6) {
+    const cx = p.x + p.w / 2;
+    ctx.fillStyle = "#9cf";
+    const t = tick * 0.4;
+    ctx.beginPath();
+    ctx.arc(cx - 26 + Math.sin(t) * 3, liftY + 40 + (t * 6) % 50, 2, 0, Math.PI * 2);
+    ctx.arc(cx + 26 + Math.cos(t) * 3, liftY + 50 + (t * 7) % 50, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // gwiazdki wysilku przy maksimum
+  if (lp >= 0.92) {
+    ctx.fillStyle = "#ffe066";
+    for (let i = 0; i < 3; i++) {
+      const a = tick * 0.1 + i * 2.1;
+      const sx = p.x + p.w / 2 + Math.cos(a) * 30;
+      const sy = liftY + 30 + Math.sin(a) * 10;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 }
 
 function drawFlag(f) {
+  const locked = boss && boss.alive;
+  if (locked) ctx.filter = "brightness(0.5) saturate(0.4)";
   drawSprite("door", f.x - 4, f.y, f.w + 8, f.h);
-  // poswiata pod drzwiami
-  ctx.fillStyle = "rgba(255,180,80,0.4)";
-  ctx.fillRect(f.x, f.y + f.h - 6, f.w, 4);
+  ctx.filter = "none";
+  if (locked) {
+    // kladka
+    ctx.fillStyle = "#ddaa33";
+    ctx.fillRect(f.x + f.w / 2 - 6, f.y + f.h / 2 - 6, 12, 14);
+    ctx.strokeStyle = "#553300";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(f.x + f.w / 2, f.y + f.h / 2 - 6, 5, Math.PI, 2 * Math.PI);
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = "rgba(255,180,80,0.5)";
+    ctx.fillRect(f.x, f.y + f.h - 6, f.w, 4);
+  }
+}
+
+function drawBoss(b) {
+  if (!b.alive) return;
+  // gdy gracz wycisniaja boss - nie rysuj zwyklej kanapy (sprite lift_* zawiera ja)
+  const lifting = player && player.state === "lift";
+  const bob = Math.sin(b.t) * 3;
+  if (!lifting) {
+    ctx.save();
+    if (b.hitFlash > 0 && b.hitFlash % 4 < 2) ctx.filter = "brightness(2.5)";
+    drawSprite("couch", b.x, b.y + bob, b.w, b.h);
+    ctx.restore();
+  }
+  // pasek HP nad bossem
+  const barW = b.w, barH = 8;
+  const bx = b.x, by = b.y - 14;
+  ctx.fillStyle = "rgba(0,0,0,0.7)";
+  ctx.fillRect(bx, by, barW, barH);
+  ctx.fillStyle = "#ff5544";
+  ctx.fillRect(bx + 2, by + 2, (barW - 4) * (b.hp / BOSS_HP), barH - 4);
+  ctx.fillStyle = "#ffb347";
+  ctx.font = "bold 10px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("BOSS - PODNIES " + b.hp + "x", bx + barW / 2, by - 4);
+  ctx.textAlign = "start";
 }
 
 function drawLightCones() {
@@ -427,6 +603,9 @@ function draw() {
 
   // meta
   if (flag) drawFlag(flag);
+
+  // boss
+  if (boss) drawBoss(boss);
 
   // gracz
   if (!dead) drawPlayer(player);
