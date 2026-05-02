@@ -166,7 +166,12 @@ function buildLevel() {
       const ch = MAP[r][c];
       const x = c * TILE, y = r * TILE;
       switch (ch) {
-        case "#": solids.push({ x, y, w: TILE, h: TILE, kind: "brick" }); break;
+        case "#": {
+          // top tile = brak # bezposrednio nad nim
+          const above = r > 0 ? MAP[r - 1][c] : ".";
+          solids.push({ x, y, w: TILE, h: TILE, kind: "brick", topTile: above !== "#" });
+          break;
+        }
         case "c": solids.push({ x, y, w: TILE, h: TILE, kind: "crate" }); break;
         case "q": solids.push({ x, y, w: TILE, h: TILE, kind: "qblock", hit: false, heartTaken: false, heartT: 0 }); break;
         case "S": hazards.push({ x: x + 4, y: y + TILE - 12, w: TILE - 8, h: 12, kind: "spikes" });
@@ -772,8 +777,42 @@ function drawDecor(d) {
   }
 }
 
+function drawGround(x, y, w, h, top) {
+  // baza - ciemna ziemia
+  ctx.fillStyle = "#5a3416";
+  ctx.fillRect(x, y, w, h);
+  // tekstura - jasniejsze grudki ziemi
+  ctx.fillStyle = "#704018";
+  for (let i = 0; i < 6; i++) {
+    const px = x + ((i * 13 + (x * 7) % 17) % (w - 4));
+    const py = y + ((i * 9 + (y * 5) % 13) % (h - 4));
+    ctx.fillRect(px, py, 3, 3);
+  }
+  // ciemniejsze plamki
+  ctx.fillStyle = "#3a200a";
+  for (let i = 0; i < 4; i++) {
+    const px = x + ((i * 11 + (x * 3) % 19) % (w - 3));
+    const py = y + 4 + ((i * 7 + (y * 11) % 17) % (h - 8));
+    ctx.fillRect(px, py, 2, 2);
+  }
+  // gorna krawedz - trawa
+  if (top) {
+    ctx.fillStyle = "#3a8a28";
+    ctx.fillRect(x, y, w, 6);
+    ctx.fillStyle = "#4ea838";
+    ctx.fillRect(x, y, w, 3);
+    // kepki trawy
+    ctx.fillStyle = "#4ea838";
+    for (let i = 0; i < 4; i++) {
+      const gx = x + 4 + i * 9;
+      ctx.fillRect(gx, y - 2, 2, 4);
+      ctx.fillRect(gx + 3, y - 1, 1, 3);
+    }
+  }
+}
+
 function drawSolid(s) {
-  if (s.kind === "brick")  drawSprite("brick", s.x, s.y, s.w, s.h);
+  if (s.kind === "brick")  drawGround(s.x, s.y, s.w, s.h, s.topTile);
   else if (s.kind === "crate")  drawSprite("crate", s.x, s.y, s.w, s.h);
   else if (s.kind === "qblock") {
     if (!s.hit) {
