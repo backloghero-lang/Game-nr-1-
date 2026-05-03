@@ -1642,7 +1642,8 @@ function drawMenuWojfer() {
   const liftH = 380;
   const liftW = liftH * (134 / 300);
   const liftX = 80;
-  const liftY = 70;
+  // przesuwaj caly sprite w pionie - gdy kuca (lp niskie), spritem nizej, kanapa schodzi razem z Wojferem
+  const liftY = 70 + (1 - lp) * 35;
 
   if (images[liftKey]) {
     let shX = 0, shY = 0;
