@@ -113,7 +113,13 @@ const ASSETS = {
   lift_low:    "img/lift_press_low.png",
   lift_mid:    "img/lift_press_mid.png",
   lift_high:   "img/lift_press_high.png",
-  lift_strain: "img/lift_strain.png"
+  lift_strain: "img/lift_strain.png",
+  bath_low:    "img/bath_low.png",
+  bath_mid:    "img/bath_mid.png",
+  bath_high:   "img/bath_high.png",
+  bath_strain: "img/bath_strain.png",
+  bath_tongue: "img/bath_tongue.png",
+  bg_salon:    "img/background.png"
 };
 const images = {};
 function loadAssets(cb) {
@@ -133,7 +139,9 @@ function loadAssets(cb) {
 // F drzwi (meta - otwierane po pokonaniu bossa), P start, Z boss kanapa
 // dekoracje: w okno, l lampa, o plakat HELP, x kartonyx2, y kartonyx3, t wieszak, p doniczka
 const TILE = 40;
-const MAP = [
+let currentLevel = 1; // 1 = wojferownia, 2 = salon
+
+const MAP1 = [
   "..................................................................................................................................",
   "..................................................................................................................................",
   "..................................................................................................................................",
@@ -151,13 +159,42 @@ const MAP = [
   "########.....##############.######.##############.####.##.##############.##############.##############.###########################"
 ];
 
-const worldWidth  = MAP[0].length * TILE;
-const worldHeight = MAP.length * TILE;
+// MAP2 - SALON (wanna boss). Kolce TYLKO na podlodze, te same moby.
+// 80 kolumn, 13 rzedow. Z = wanna boss (HP 5), F = drzwi-meta
+const MAP2 = [
+  "................................................................................",
+  "................................................................................",
+  "................................................................................",
+  "................................................................................",
+  "................................................................................",
+  ".................###.............q##q................c#####c............###....",
+  "..........C.................C.C.C.........C.C.C..............C..............C..",
+  "........###.......##......###.....####....................##......##....##.....",
+  "....................................................................q##q.......",
+  "....P....r......x........r....p....r.......y......r.......p......x............F",
+  "...........K............R............N..........B..............K.....Z.........",
+  "##########.SSS.##########.SSS.########.SSS.########.##########.SSS.#############",
+  "##########.....##########.....########.....########.##########.....#############"
+];
+
+let MAP = MAP1;
+let worldWidth  = MAP[0].length * TILE;
+let worldHeight = MAP.length * TILE;
 
 let player, coins, enemies, hazards, decor, flag, solids, score, lives, won, dead, boss;
 let projectiles = [];
 
-const BOSS_HP = 3; // ile razy podniesc
+const BOSS_HP = 3; // ile razy podniesc (level 1)
+const BOSS_HP2 = 5; // poziom 2 - wanna
+
+function loadLevel(n) {
+  currentLevel = n;
+  MAP = (n === 2) ? MAP2 : MAP1;
+  worldWidth  = MAP[0].length * TILE;
+  worldHeight = MAP.length * TILE;
+  projectiles = [];
+  buildLevel();
+}
 
 function buildLevel() {
   solids = []; coins = []; enemies = []; hazards = []; decor = []; flag = null; boss = null;
@@ -173,7 +210,12 @@ function buildLevel() {
           break;
         }
         case "c": solids.push({ x, y, w: TILE, h: TILE, kind: "crate" }); break;
-        case "q": solids.push({ x, y, w: TILE, h: TILE, kind: "qblock", hit: false, heartTaken: false, heartT: 0 }); break;
+        case "q": {
+          // co drugi q-blok wypuszcza tarcze, reszta serce (deterministycznie)
+          const dropKind = (c % 2 === 0) ? "shield" : "heart";
+          solids.push({ x, y, w: TILE, h: TILE, kind: "qblock", hit: false, heartTaken: false, heartT: 0, dropKind });
+          break;
+        }
         case "S": hazards.push({ x: x + 4, y: y + TILE - 12, w: TILE - 8, h: 12, kind: "spikes" });
                   decor.push({ x: x, y: y + TILE - 18, kind: "spikes" }); break;
         case "C": coins.push({ x: x + 12, y: y + 12, w: 16, h: 16, taken: false, t: 0 }); break;
@@ -191,8 +233,19 @@ function buildLevel() {
         case "y": decor.push({ x, y, kind: "boxes3" }); break;
         case "t": decor.push({ x, y, kind: "coatrack" }); break;
         case "r": decor.push({ x, y, kind: "radiator", weapon: true, available: true }); break;
-        case "Z": boss = { x: x - 50, y: y - 32, w: 170, h: 100, hp: BOSS_HP, alive: true,
-                            t: 0, hitFlash: 0, baseY: y - 32, cooldown: 0, liftPhase: 0 }; break;
+        case "Z": {
+          const isWanna = currentLevel === 2;
+          const bw = isWanna ? 160 : 170;
+          const bh = isWanna ? 110 : 100;
+          // wanna ma wieksza wysokosc => wyzsze osadzenie zeby siedziala na ziemi
+          const offY = isWanna ? 82 : 32;
+          boss = { x: x - 50, y: y - offY, w: bw, h: bh,
+                   hp: isWanna ? BOSS_HP2 : BOSS_HP, hpMax: isWanna ? BOSS_HP2 : BOSS_HP,
+                   alive: true, kind: isWanna ? "bath" : "couch",
+                   t: 0, hitFlash: 0, baseY: y - offY, cooldown: 0, liftPhase: 0,
+                   spawnSide: 1 };
+          break;
+        }
       }
     }
   }
@@ -201,7 +254,8 @@ function buildLevel() {
 function makePlayer(x, y) {
   return { x: x + 4, y: y - 8, w: 28, h: 44, vx: 0, vy: 0,
            speed: 4, jump: -12, grounded: false, dir: 1, walk: 0, state: "idle",
-           jumpsLeft: 2, jumpHeld: false, weapon: 0, throwHeld: false };
+           jumpsLeft: 2, jumpHeld: false, weapon: 0, throwHeld: false,
+           shield: 0, shieldT: 0 };
 }
 
 function makeEnemy(x, y, kind, w, h, vx) {
@@ -346,15 +400,24 @@ function update() {
 
     if (aabb(player, en)) {
       if (player.vy > 0 && player.y + player.h - en.y < 22) {
+        // stomp - tarcza zostaje
         en.alive = false;
         player.vy = -9;
         score += 100;
+        Audio.stomp();
+      } else if (player.shield > 0) {
+        // tarcza absorbuje uderzenie z boku
+        en.alive = false;
+        player.shield--;
+        player.shieldT = 18; // krotki blysk pekajacej tarczy
+        score += 150;
         Audio.stomp();
       } else {
         die();
       }
     }
   }
+  if (player.shieldT > 0) player.shieldT--;
 
   // kolce / pulapki
   for (const h of hazards) {
@@ -410,12 +473,17 @@ function update() {
   for (const s of solids) {
     if (s.kind !== "qblock" || !s.hit || s.heartTaken) continue;
     if (s.heartT > 0) s.heartT--;
-    // serce siedzi na blocku - mozna podniesc
-    const heartBox = { x: s.x + 6, y: s.y - 26, w: s.w - 12, h: 26 };
-    if (aabb(player, heartBox)) {
+    // drop siedzi na blocku - mozna podniesc
+    const dropBox = { x: s.x + 6, y: s.y - 26, w: s.w - 12, h: 26 };
+    if (aabb(player, dropBox)) {
       s.heartTaken = true;
-      if (lives < 5) lives++;
-      score += 200;
+      if (s.dropKind === "shield") {
+        player.shield = 1; // max 1 tarcza
+        score += 200;
+      } else {
+        if (lives < 5) lives++;
+        score += 200;
+      }
       Audio.coin();
     }
   }
@@ -456,114 +524,4 @@ function update() {
     let lift = 0;
     if (t < 30)      lift = t / 30;            // pchanie w gore
     else if (t < 60) lift = 1 + Math.sin((t - 30) * 0.4) * 0.05; // trzymanie z dygotem
-    else             lift = (90 - t) / 30;     // opuszczanie
-    boss.y = boss.baseY - 55 * lift;
-    boss.liftPhase = lift;
-    if (player.liftTime <= 0) {
-      boss.y = boss.baseY;
-      boss.liftPhase = 0;
-      boss.hp--;
-      boss.hitFlash = 20;
-      score += 300;
-      Audio.stomp();
-      boss.cooldown = 30; // pol sekundy zanim mozna znow
-      player.state = "idle";
-      player.vy = -6; // maly odskok
-      if (boss.hp <= 0) { boss.alive = false; Audio.win(); }
-    }
-  }
-
-  // drzwi otwarte tylko gdy boss pokonany
-  if (flag && aabb(player, flag) && (!boss || !boss.alive)) {
-    won = true;
-    Audio.win();
-  }
-
-  camera.x = player.x + player.w / 2 - canvas.width / 2;
-  camera.y = player.y + player.h / 2 - canvas.height / 2;
-  if (camera.x < 0) camera.x = 0;
-  if (camera.x > worldWidth - canvas.width) camera.x = worldWidth - canvas.width;
-  if (camera.y < 0) camera.y = 0;
-  if (camera.y > worldHeight - canvas.height) camera.y = worldHeight - canvas.height;
-}
-
-function die() {
-  if (dead) return;
-  dead = true;
-  lives--;
-  Audio.die();
-  setTimeout(() => {
-    if (lives <= 0) resetGame();
-    else respawn();
-  }, 800);
-}
-function respawn() {
-  for (let r = 0; r < MAP.length; r++)
-    for (let c = 0; c < MAP[r].length; c++)
-      if (MAP[r][c] === "P") player = makePlayer(c * TILE, r * TILE);
-  dead = false;
-}
-function resetGame() {
-  score = 0; lives = 3; won = false; dead = false;
-  projectiles = [];
-  buildLevel();
-}
-
-function throwWeapon() {
-  if (!player || player.weapon <= 0) return;
-  player.weapon--;
-  projectiles.push({
-    x: player.x + (player.dir > 0 ? player.w : -16),
-    y: player.y + 12,
-    vx: player.dir * 9,
-    vy: -3,
-    rot: 0,
-    age: 0,
-    alive: true
-  });
-  Audio.stomp();
-}
-
-// ===== RYSOWANIE =====
-function drawSprite(key, x, y, w, h, flipX = false) {
-  const img = images[key];
-  if (!img) { ctx.fillStyle = "#f0f"; ctx.fillRect(x, y, w, h); return; }
-  if (flipX) {
-    ctx.save();
-    ctx.translate(x + w, y);
-    ctx.scale(-1, 1);
-    ctx.drawImage(img, 0, 0, w, h);
-    ctx.restore();
-  } else {
-    ctx.drawImage(img, x, y, w, h);
-  }
-}
-
-// === ELEMENTY POKOJU WOJFERA (proceduralne) ===
-function drawBlueDoor(x, y, w, h) {
-  // ciemna rama
-  ctx.fillStyle = "#3a2410";
-  ctx.fillRect(x - 4, y - 4, w + 8, h + 4);
-  // niebieskie drzwi
-  ctx.fillStyle = "#4a82b4";
-  ctx.fillRect(x, y, w, h);
-  // jasniejszy panel boczny (cienie)
-  ctx.fillStyle = "#5d92c4";
-  ctx.fillRect(x + 4, y + 6, w - 8, 4);
-  // panele
-  ctx.fillStyle = "#3a6a98";
-  ctx.fillRect(x + 8, y + 16, w - 16, h * 0.35);
-  ctx.fillRect(x + 8, y + 20 + h * 0.35, w - 16, h * 0.55);
-  // ramy paneli (jasne)
-  ctx.strokeStyle = "#6ea8d8";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x + 8, y + 16, w - 16, h * 0.35);
-  ctx.strokeRect(x + 8, y + 20 + h * 0.35, w - 16, h * 0.55);
-  // klamka
-  ctx.fillStyle = "#d4a020";
-  ctx.beginPath();
-  ctx.arc(x + 10, y + h / 2, 3, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-f
+    else             lift = (90 - t) / 30;     // op
