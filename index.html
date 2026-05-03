@@ -160,7 +160,6 @@ const MAP1 = [
 ];
 
 // MAP2 - SALON (wanna boss). Kolce TYLKO na podlodze, te same moby.
-// 80 kolumn, 13 rzedow. Z = wanna boss (HP 5), F = drzwi-meta
 const MAP2 = [
   "................................................................................",
   "................................................................................",
@@ -211,7 +210,6 @@ function buildLevel() {
         }
         case "c": solids.push({ x, y, w: TILE, h: TILE, kind: "crate" }); break;
         case "q": {
-          // co drugi q-blok wypuszcza tarcze, reszta serce (deterministycznie)
           const dropKind = (c % 2 === 0) ? "shield" : "heart";
           solids.push({ x, y, w: TILE, h: TILE, kind: "qblock", hit: false, heartTaken: false, heartT: 0, dropKind });
           break;
@@ -237,7 +235,6 @@ function buildLevel() {
           const isWanna = currentLevel === 2;
           const bw = isWanna ? 160 : 170;
           const bh = isWanna ? 110 : 100;
-          // wanna ma wieksza wysokosc => wyzsze osadzenie zeby siedziala na ziemi
           const offY = isWanna ? 82 : 32;
           boss = { x: x - 50, y: y - offY, w: bw, h: bh,
                    hp: isWanna ? BOSS_HP2 : BOSS_HP, hpMax: isWanna ? BOSS_HP2 : BOSS_HP,
@@ -400,16 +397,14 @@ function update() {
 
     if (aabb(player, en)) {
       if (player.vy > 0 && player.y + player.h - en.y < 22) {
-        // stomp - tarcza zostaje
         en.alive = false;
         player.vy = -9;
         score += 100;
         Audio.stomp();
       } else if (player.shield > 0) {
-        // tarcza absorbuje uderzenie z boku
         en.alive = false;
         player.shield--;
-        player.shieldT = 18; // krotki blysk pekajacej tarczy
+        player.shieldT = 18;
         score += 150;
         Audio.stomp();
       } else {
@@ -417,7 +412,6 @@ function update() {
       }
     }
   }
-  if (player.shieldT > 0) player.shieldT--;
 
   // kolce / pulapki
   for (const h of hazards) {
@@ -473,12 +467,11 @@ function update() {
   for (const s of solids) {
     if (s.kind !== "qblock" || !s.hit || s.heartTaken) continue;
     if (s.heartT > 0) s.heartT--;
-    // drop siedzi na blocku - mozna podniesc
     const dropBox = { x: s.x + 6, y: s.y - 26, w: s.w - 12, h: 26 };
     if (aabb(player, dropBox)) {
       s.heartTaken = true;
       if (s.dropKind === "shield") {
-        player.shield = 1; // max 1 tarcza
+        player.shield = 1;
         score += 200;
       } else {
         if (lives < 5) lives++;
@@ -524,4 +517,1020 @@ function update() {
     let lift = 0;
     if (t < 30)      lift = t / 30;            // pchanie w gore
     else if (t < 60) lift = 1 + Math.sin((t - 30) * 0.4) * 0.05; // trzymanie z dygotem
-    else             lift = (90 - t) / 30;     // op
+    else             lift = (90 - t) / 30;     // opuszczanie
+    boss.y = boss.baseY - 55 * lift;
+    boss.liftPhase = lift;
+    if (player.liftTime <= 0) {
+      boss.y = boss.baseY;
+      boss.liftPhase = 0;
+      boss.hp--;
+      boss.hitFlash = 20;
+      score += 300;
+      Audio.stomp();
+      boss.cooldown = 30; // pol sekundy zanim mozna znow
+      player.state = "idle";
+      player.vy = -6; // maly odskok
+      // SALON: po kazdym wycisnieciu spawn moba z lewej lub prawej
+      if (boss.kind === "bath" && boss.hp > 0) {
+        const side = boss.spawnSide;
+        boss.spawnSide = -side;
+        const types = ["crab", "rat", "ninja", "barrel"];
+        const t2 = types[Math.floor(Math.random() * types.length)];
+        const sizes = { crab: [34,22,1.2], rat: [34,28,1.5], barrel: [34,30,1.0], ninja: [30,38,1.8] };
+        const [w2, h2, sp] = sizes[t2];
+        const spawnX = side > 0 ? 20 : worldWidth - 60;
+        const spawnY = boss.baseY + 40;
+        enemies.push(makeEnemy(spawnX, spawnY, t2, w2, h2, side > 0 ? sp : -sp));
+      }
+      if (boss.hp <= 0) { boss.alive = false; Audio.win(); }
+    }
+  }
+
+  if (player.shieldT > 0) player.shieldT--;
+
+  // drzwi otwarte tylko gdy boss pokonany
+  if (flag && aabb(player, flag) && (!boss || !boss.alive)) {
+    if (currentLevel === 1) {
+      Audio.win();
+      loadLevel(2);
+    } else {
+      won = true;
+      Audio.win();
+    }
+  }
+
+  camera.x = player.x + player.w / 2 - canvas.width / 2;
+  camera.y = player.y + player.h / 2 - canvas.height / 2;
+  if (camera.x < 0) camera.x = 0;
+  if (camera.x > worldWidth - canvas.width) camera.x = worldWidth - canvas.width;
+  if (camera.y < 0) camera.y = 0;
+  if (camera.y > worldHeight - canvas.height) camera.y = worldHeight - canvas.height;
+}
+
+function die() {
+  if (dead) return;
+  dead = true;
+  lives--;
+  Audio.die();
+  setTimeout(() => {
+    if (lives <= 0) resetGame();
+    else respawn();
+  }, 800);
+}
+function respawn() {
+  for (let r = 0; r < MAP.length; r++)
+    for (let c = 0; c < MAP[r].length; c++)
+      if (MAP[r][c] === "P") player = makePlayer(c * TILE, r * TILE);
+  dead = false;
+}
+function resetGame() {
+  score = 0; lives = 3; won = false; dead = false;
+  projectiles = [];
+  loadLevel(1);
+}
+
+function throwWeapon() {
+  if (!player || player.weapon <= 0) return;
+  player.weapon--;
+  projectiles.push({
+    x: player.x + (player.dir > 0 ? player.w : -16),
+    y: player.y + 12,
+    vx: player.dir * 9,
+    vy: -3,
+    rot: 0,
+    age: 0,
+    alive: true
+  });
+  Audio.stomp();
+}
+
+// ===== RYSOWANIE =====
+function drawSprite(key, x, y, w, h, flipX = false) {
+  const img = images[key];
+  if (!img) { ctx.fillStyle = "#f0f"; ctx.fillRect(x, y, w, h); return; }
+  if (flipX) {
+    ctx.save();
+    ctx.translate(x + w, y);
+    ctx.scale(-1, 1);
+    ctx.drawImage(img, 0, 0, w, h);
+    ctx.restore();
+  } else {
+    ctx.drawImage(img, x, y, w, h);
+  }
+}
+
+// === ELEMENTY POKOJU WOJFERA (proceduralne) ===
+function drawBlueDoor(x, y, w, h) {
+  // ciemna rama
+  ctx.fillStyle = "#3a2410";
+  ctx.fillRect(x - 4, y - 4, w + 8, h + 4);
+  // niebieskie drzwi
+  ctx.fillStyle = "#4a82b4";
+  ctx.fillRect(x, y, w, h);
+  // jasniejszy panel boczny (cienie)
+  ctx.fillStyle = "#5d92c4";
+  ctx.fillRect(x + 4, y + 6, w - 8, 4);
+  // panele
+  ctx.fillStyle = "#3a6a98";
+  ctx.fillRect(x + 8, y + 16, w - 16, h * 0.35);
+  ctx.fillRect(x + 8, y + 20 + h * 0.35, w - 16, h * 0.55);
+  // ramy paneli (jasne)
+  ctx.strokeStyle = "#6ea8d8";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 8, y + 16, w - 16, h * 0.35);
+  ctx.strokeRect(x + 8, y + 20 + h * 0.35, w - 16, h * 0.55);
+  // klamka
+  ctx.fillStyle = "#d4a020";
+  ctx.beginPath();
+  ctx.arc(x + 10, y + h / 2, 3, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawWardrobe(x, y, w, h) {
+  // korpus ciemne drewno
+  ctx.fillStyle = "#2a1608";
+  ctx.fillRect(x - 4, y - 4, w + 8, h + 8);
+  ctx.fillStyle = "#4a2c12";
+  ctx.fillRect(x, y, w, h);
+  // dwie czesci pionowe (drzwi)
+  ctx.fillStyle = "#3a200e";
+  ctx.fillRect(x + 4, y + 4, w / 2 - 6, h - 8);
+  ctx.fillRect(x + w / 2 + 2, y + 4, w / 2 - 6, h - 8);
+  // szczeliny / linie ozdobne
+  ctx.strokeStyle = "#1a0a04";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 4, y + 4, w / 2 - 6, h - 8);
+  ctx.strokeRect(x + w / 2 + 2, y + 4, w / 2 - 6, h - 8);
+  ctx.beginPath();
+  ctx.moveTo(x + w / 2, y + 4);
+  ctx.lineTo(x + w / 2, y + h - 4);
+  ctx.stroke();
+  // jasne refleksy (slojkowanie)
+  ctx.strokeStyle = "rgba(140,90,40,0.4)";
+  for (let yy = y + 14; yy < y + h - 14; yy += 12) {
+    ctx.beginPath();
+    ctx.moveTo(x + 8, yy + Math.sin(yy * 0.3) * 1);
+    ctx.lineTo(x + w / 2 - 4, yy + Math.sin(yy * 0.3) * 1);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x + w / 2 + 4, yy + Math.cos(yy * 0.3) * 1);
+    ctx.lineTo(x + w - 8, yy + Math.cos(yy * 0.3) * 1);
+    ctx.stroke();
+  }
+  // klamki
+  ctx.fillStyle = "#d4a020";
+  ctx.beginPath();
+  ctx.arc(x + w / 2 - 8, y + h / 2, 2.5, 0, Math.PI * 2);
+  ctx.arc(x + w / 2 + 8, y + h / 2, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawTapestry(x, y, w, h) {
+  // kolorowe pasy tecznowe
+  const colors = ["#c0382d", "#e8773a", "#f4c430", "#3aa54a", "#3a78c8", "#7a3aaa"];
+  const stripH = h / colors.length;
+  for (let i = 0; i < colors.length; i++) {
+    ctx.fillStyle = colors[i];
+    ctx.fillRect(x, y + i * stripH, w, stripH);
+  }
+  // czarna ramka
+  ctx.strokeStyle = "#1a0808";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, h);
+  // wzor lotosu w srodku
+  const cx = x + w / 2, cy = y + h / 2;
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  for (let p = 0; p < 8; p++) {
+    const a = (p / 8) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.ellipse(cx + Math.cos(a) * 10, cy + Math.sin(a) * 10, w * 0.10, w * 0.05, a, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = "rgba(0,0,0,0.8)";
+  ctx.beginPath();
+  ctx.arc(cx, cy, w * 0.06, 0, Math.PI * 2);
+  ctx.fill();
+  // sznurek na gorze (zawieszenie)
+  ctx.fillStyle = "#3a2410";
+  ctx.fillRect(x - 4, y - 4, w + 8, 3);
+}
+
+function drawBackground() {
+  // SALON - obrazek tla zamiast proceduralnej sceny
+  if (currentLevel === 2 && images.bg_salon) {
+    const bg = images.bg_salon;
+    const px = camera.x * 0.3;
+    const bgH = canvas.height;
+    const bgW = bg.width * (bgH / bg.height);
+    const startX = -((px) % bgW) - bgW;
+    for (let bx = startX; bx < canvas.width + bgW; bx += bgW) {
+      ctx.drawImage(bg, Math.floor(bx), 0, Math.ceil(bgW), bgH);
+    }
+    return;
+  }
+
+  // gradient sciany - jasny dzien
+  const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  g.addColorStop(0, "#f0e0c0");      // sufit jasny
+  g.addColorStop(0.55, "#d8b890");   // sciana
+  g.addColorStop(0.78, "#a87850");   // przejscie do podlogi
+  g.addColorStop(0.82, "#6a3a1a");   // listwa drewniana
+  g.addColorStop(1, "#3a1f08");      // podloga ciemna
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // === ELEMENTY POKOJU - parallax 0.08 (prawie statyczne) ===
+  const px = camera.x * 0.08;
+  const py = camera.y * 0.08;
+  ctx.save();
+  ctx.translate(-Math.floor(px), -Math.floor(py));
+
+  // Ukladamy zestaw pokoju powtarzajacy sie co 720px:
+  // [drzwi - makata - kredens - makata - drzwi]
+  const repeatW = 720;
+  const totalSpan = worldWidth + repeatW * 2;
+  const startI = -1;
+  const endI = Math.ceil(totalSpan / repeatW);
+  for (let i = startI; i < endI; i++) {
+    const bx = i * repeatW;
+    // niebieskie drzwi 1
+    drawBlueDoor(bx + 20, 110, 90, 220);
+    // makata 1
+    drawTapestry(bx + 140, 80, 110, 150);
+    // kredens
+    drawWardrobe(bx + 290, 100, 160, 240);
+    // makata 2
+    drawTapestry(bx + 480, 90, 100, 140);
+    // niebieskie drzwi 2
+    drawBlueDoor(bx + 610, 110, 90, 220);
+  }
+
+  // listwa przypodlogowa (drewniana)
+  ctx.fillStyle = "#3a200e";
+  ctx.fillRect(-px - 100, 360, worldWidth + 200, 8);
+  ctx.fillStyle = "#5a3818";
+  ctx.fillRect(-px - 100, 358, worldWidth + 200, 2);
+
+  ctx.restore();
+
+  // delikatne snopy swiatla z sufitu (efekt dnia)
+  ctx.save();
+  const sun = ctx.createRadialGradient(canvas.width * 0.7, 30, 10, canvas.width * 0.7, 30, 320);
+  sun.addColorStop(0, "rgba(255,240,200,0.18)");
+  sun.addColorStop(1, "rgba(255,240,200,0)");
+  ctx.fillStyle = sun;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+
+function drawDecor(d) {
+  const k = d.kind;
+  // wylaczone w wersji dziennej:
+  if (k === "window" || k === "lamp" || k === "coatrack") return;
+  if (k === "radiator") {
+    if (d.available === false) return;
+    const w = 28, h = 44;
+    const x = d.x + 6, y = d.y + TILE * 2 - h;
+    // korpus jasny metal
+    ctx.fillStyle = "#d8dce0";
+    ctx.fillRect(x, y, w, h);
+    // gorna i dolna belka
+    ctx.fillStyle = "#9098a0";
+    ctx.fillRect(x, y, w, 4);
+    ctx.fillRect(x, y + h - 4, w, 4);
+    // 4 zebra pionowe
+    ctx.fillStyle = "#7a8088";
+    for (let i = 0; i < 4; i++) {
+      ctx.fillRect(x + 3 + i * 6, y + 4, 3, h - 8);
+    }
+    // jasne refleksy z lewej
+    ctx.fillStyle = "rgba(255,255,255,0.4)";
+    ctx.fillRect(x + 1, y + 4, 1, h - 8);
+    // czerwony zawor na gorze
+    ctx.fillStyle = "#b03020";
+    ctx.fillRect(x + w / 2 - 3, y - 5, 6, 5);
+    ctx.fillStyle = "#202020";
+    ctx.fillRect(x + w / 2 - 1, y - 8, 2, 3);
+    // cien pod
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.fillRect(x - 2, y + h, w + 4, 2);
+    // delikatna obwodka
+    ctx.strokeStyle = "#5a6068";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    return;
+  }
+  else if (k === "poster") drawSprite("poster", d.x, d.y, 70, 90);
+  else if (k === "pot")    drawSprite("pot", d.x + 8, d.y + TILE - 28, 28, 28);
+  else if (k === "boxes2") drawSprite("boxes2", d.x, d.y - 40, 70, 90);
+  else if (k === "boxes3") drawSprite("boxes3", d.x, d.y - 60, 70, 110);
+  else if (k === "couch")  drawSprite("couch", d.x - 10, d.y - 10, 130, 80);
+  else if (k === "coatrack") drawSprite("coatrack", d.x, d.y - 80, 50, 130);
+  else if (k === "spikes") {
+    // poswiata pod kolcami
+    const cx = d.x + TILE / 2, cy = d.y + 10;
+    const glow = ctx.createRadialGradient(cx, cy, 2, cx, cy, 28);
+    glow.addColorStop(0, "rgba(255,180,60,0.55)");
+    glow.addColorStop(0.5, "rgba(255,80,30,0.25)");
+    glow.addColorStop(1, "rgba(255,40,20,0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(d.x - 10, d.y - 18, TILE + 20, 40);
+    // plomienie - 3 jezyki migocace
+    const t = tick * 0.25;
+    for (let i = 0; i < 3; i++) {
+      const fx = d.x + 8 + i * 12;
+      const fy = d.y;
+      const flick = Math.sin(t + i * 1.7) * 3;
+      const flickH = 14 + Math.sin(t * 1.3 + i) * 4;
+      // zewnetrzny czerwony plomien
+      ctx.fillStyle = "rgba(255,80,30,0.85)";
+      ctx.beginPath();
+      ctx.moveTo(fx - 4, fy + 6);
+      ctx.quadraticCurveTo(fx + flick, fy - flickH, fx + 4, fy + 6);
+      ctx.fill();
+      // wewnetrzny zolty rdzen
+      ctx.fillStyle = "rgba(255,230,120,0.9)";
+      ctx.beginPath();
+      ctx.moveTo(fx - 2, fy + 6);
+      ctx.quadraticCurveTo(fx + flick * 0.7, fy - flickH * 0.7, fx + 2, fy + 6);
+      ctx.fill();
+    }
+    // sprite kolcow na wierzchu
+    drawSprite("spikes", d.x, d.y, TILE, 18);
+    // iskry odlatujace
+    ctx.fillStyle = "#ffe066";
+    for (let i = 0; i < 2; i++) {
+      const a = (tick + i * 30) * 0.08;
+      const sx = cx + Math.cos(a) * 14;
+      const sy = cy - 10 - ((tick + i * 30) % 40) / 2;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawGround(x, y, w, h, top) {
+  // baza - ciemna ziemia
+  ctx.fillStyle = "#5a3416";
+  ctx.fillRect(x, y, w, h);
+  // tekstura - jasniejsze grudki ziemi
+  ctx.fillStyle = "#704018";
+  for (let i = 0; i < 6; i++) {
+    const px = x + ((i * 13 + (x * 7) % 17) % (w - 4));
+    const py = y + ((i * 9 + (y * 5) % 13) % (h - 4));
+    ctx.fillRect(px, py, 3, 3);
+  }
+  // ciemniejsze plamki
+  ctx.fillStyle = "#3a200a";
+  for (let i = 0; i < 4; i++) {
+    const px = x + ((i * 11 + (x * 3) % 19) % (w - 3));
+    const py = y + 4 + ((i * 7 + (y * 11) % 17) % (h - 8));
+    ctx.fillRect(px, py, 2, 2);
+  }
+  // gorna krawedz - trawa
+  if (top) {
+    ctx.fillStyle = "#3a8a28";
+    ctx.fillRect(x, y, w, 6);
+    ctx.fillStyle = "#4ea838";
+    ctx.fillRect(x, y, w, 3);
+    // kepki trawy
+    ctx.fillStyle = "#4ea838";
+    for (let i = 0; i < 4; i++) {
+      const gx = x + 4 + i * 9;
+      ctx.fillRect(gx, y - 2, 2, 4);
+      ctx.fillRect(gx + 3, y - 1, 1, 3);
+    }
+  }
+}
+
+function drawSolid(s) {
+  if (s.kind === "brick")  drawGround(s.x, s.y, s.w, s.h, s.topTile);
+  else if (s.kind === "crate")  drawSprite("crate", s.x, s.y, s.w, s.h);
+  else if (s.kind === "qblock") {
+    if (!s.hit) {
+      drawSprite("qblock", s.x, s.y, s.w, s.h);
+    } else {
+      // klocek po uderzeniu: kolor podlogi z czerwonym X
+      ctx.fillStyle = "#3a1f08";       // ciemna podloga - obwoluta
+      ctx.fillRect(s.x, s.y, s.w, s.h);
+      ctx.fillStyle = "#5a3818";       // jasniejsze drewno - srodek
+      ctx.fillRect(s.x + 3, s.y + 3, s.w - 6, s.h - 6);
+      // delikatne slojkowanie
+      ctx.strokeStyle = "rgba(120,80,40,0.4)";
+      ctx.lineWidth = 1;
+      for (let i = 1; i < 4; i++) {
+        ctx.beginPath();
+        ctx.moveTo(s.x + 4, s.y + i * 8 + 2);
+        ctx.lineTo(s.x + s.w - 4, s.y + i * 8 + 2);
+        ctx.stroke();
+      }
+      // czerwony X
+      ctx.strokeStyle = "#cc2a18";
+      ctx.lineWidth = 4;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(s.x + 10, s.y + 10);
+      ctx.lineTo(s.x + s.w - 10, s.y + s.h - 10);
+      ctx.moveTo(s.x + s.w - 10, s.y + 10);
+      ctx.lineTo(s.x + 10, s.y + s.h - 10);
+      ctx.stroke();
+      ctx.lineCap = "butt";
+      // serce na wierzchu jezeli jeszcze nie zebrane
+      if (!s.heartTaken) {
+        const t = (30 - s.heartT) / 30;
+        const yOff = -22 - Math.sin(t * Math.PI) * 12 + (s.heartT > 0 ? 0 : Math.sin(tick * 0.1) * 2);
+        const sx = s.x + (s.w - 26) / 2;
+        const sy = s.y + yOff;
+        if (s.dropKind === "shield") {
+          const g = ctx.createRadialGradient(sx + 13, sy + 13, 2, sx + 13, sy + 13, 22);
+          g.addColorStop(0, "rgba(80,160,255,0.55)");
+          g.addColorStop(1, "rgba(80,160,255,0)");
+          ctx.fillStyle = g;
+          ctx.fillRect(sx - 10, sy - 10, 46, 46);
+          ctx.fillStyle = "#3a78d8";
+          ctx.beginPath();
+          ctx.moveTo(sx + 13, sy + 2);
+          ctx.lineTo(sx + 24, sy + 7);
+          ctx.lineTo(sx + 24, sy + 16);
+          ctx.lineTo(sx + 13, sy + 26);
+          ctx.lineTo(sx + 2, sy + 16);
+          ctx.lineTo(sx + 2, sy + 7);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = "#7ac0ff";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.fillStyle = "#e0f0ff";
+          ctx.fillRect(sx + 11, sy + 7, 4, 14);
+          ctx.fillRect(sx + 7, sy + 11, 12, 4);
+        } else if (images.heart) {
+          const g = ctx.createRadialGradient(sx + 13, sy + 13, 2, sx + 13, sy + 13, 22);
+          g.addColorStop(0, "rgba(255,80,100,0.5)");
+          g.addColorStop(1, "rgba(255,80,100,0)");
+          ctx.fillStyle = g;
+          ctx.fillRect(sx - 10, sy - 10, 46, 46);
+          ctx.drawImage(images.heart, sx, sy, 26, 26);
+        }
+      }
+    }
+  }
+}
+
+function drawCoin(c) {
+  const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+  const grad = ctx.createRadialGradient(cx, cy, 1, cx, cy, 18);
+  grad.addColorStop(0, "rgba(255,220,120,0.45)");
+  grad.addColorStop(1, "rgba(255,180,60,0)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(c.x - 8, c.y - 8, c.w + 16, c.h + 16);
+  const bob = Math.sin(c.t) * 2;
+  drawSprite("coin", c.x - 4, c.y - 4 + bob, 24, 24);
+}
+
+function drawEnemy(en) {
+  const bob = Math.sin(en.t) * 1;
+  drawSprite(en.kind, en.x, en.y + bob, en.w, en.h, en.vx > 0);
+}
+
+function drawHeldRadiator(p) {
+  // mini grzejnik trzymany w rece
+  const w = 14, h = 20;
+  // pozycja przy reke (przed/za graczem zaleznie od kierunku)
+  const handY = p.y + p.h * 0.5;
+  const bob = (p.state === "run") ? Math.sin(p.walk * 1.2) * 1.5 : 0;
+  let x;
+  if (p.dir > 0) {
+    x = p.x + p.w - 4;
+  } else {
+    x = p.x - w + 4;
+  }
+  const y = handY + bob;
+  // korpus
+  ctx.fillStyle = "#d8dce0";
+  ctx.fillRect(x, y, w, h);
+  // zebra
+  ctx.fillStyle = "#7a8088";
+  for (let i = 0; i < 3; i++) ctx.fillRect(x + 2 + i * 4, y + 2, 2, h - 4);
+  // krawedzie
+  ctx.fillStyle = "#9098a0";
+  ctx.fillRect(x, y, w, 2);
+  ctx.fillRect(x, y + h - 2, w, 2);
+  // czerwony zawor
+  ctx.fillStyle = "#b03020";
+  ctx.fillRect(x + w / 2 - 2, y - 2, 4, 3);
+  // mala dlon (oblepia od strony gracza)
+  ctx.fillStyle = "#d8a888";
+  if (p.dir > 0) {
+    ctx.fillRect(x - 3, y + 5, 4, 4);
+  } else {
+    ctx.fillRect(x + w - 1, y + 5, 4, 4);
+  }
+  // obwodka
+  ctx.strokeStyle = "#5a6068";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+}
+
+function drawPlayer(p) {
+  let key = "player_" + p.state;
+  let yOff = -4;
+  let xScale = 1;
+  let yScale = 1;
+  // animacja biegu
+  if (p.state === "run") {
+    const phase = Math.floor(p.walk) % 4;
+    key = (phase === 0 || phase === 2) ? "player_run" : "player_idle";
+    yOff = -4 + (phase === 1 || phase === 3 ? 2 : 0);
+    xScale = (phase === 0 || phase === 2) ? 1.0 : 0.96;
+  }
+  // animacja biegu - normalny render
+  if (p.state !== "lift") {
+    // cien pod stopami (jesli na ziemi)
+    if (p.grounded) {
+      ctx.fillStyle = "rgba(0,0,0,0.30)";
+      ctx.beginPath();
+      ctx.ellipse(p.x + p.w / 2, p.y + p.h + 2, p.w * 0.55, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const w = (p.w + 12) * xScale;
+    const h = (p.h + 4) * yScale;
+    const x = p.x - 6 + ((p.w + 12) - w) / 2;
+
+    if (p.shield > 0 || p.shieldT > 0) {
+      const cx = p.x + p.w / 2;
+      const cy = p.y + p.h / 2;
+      const pulse = 1 + Math.sin(tick * 0.15) * 0.08;
+      const radius = 36 * pulse;
+      const breaking = p.shieldT > 0 && p.shield === 0;
+      const alpha = breaking ? (p.shieldT / 18) * 0.7 : 0.45;
+      const sg = ctx.createRadialGradient(cx, cy, 8, cx, cy, radius);
+      sg.addColorStop(0, "rgba(140,200,255," + alpha + ")");
+      sg.addColorStop(0.6, "rgba(80,160,255," + (alpha * 0.6) + ")");
+      sg.addColorStop(1, "rgba(80,160,255,0)");
+      ctx.fillStyle = sg;
+      ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+      ctx.strokeStyle = "rgba(180,220,255," + (alpha + 0.2) + ")";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius * 0.7, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    drawSprite(key, x, p.y + yOff, w, h, p.dir < 0);
+
+    if (p.weapon > 0) drawHeldRadiator(p);
+
+    return;
+  }
+
+  // === ANIMACJA WYCISKANIA - dedykowane klatki Wojfer+kanapa ===
+  const lp = boss ? boss.liftPhase : 0;
+
+  if (boss && boss.kind === "bath") {
+    drawSprite("player_idle", p.x - 6, p.y - 4, p.w + 12, p.h + 4, p.dir < 0);
+    let bathKey = "bath_low";
+    if (lp < 0.25) bathKey = "bath_low";
+    else if (lp < 0.55) bathKey = "bath_mid";
+    else if (lp < 0.92) bathKey = "bath_high";
+    else                bathKey = "bath_strain";
+    const bw = boss.w, bh = boss.h;
+    const bxx = p.x + p.w / 2 - bw / 2;
+    const byy = p.y - bh - 4 + (1 - lp) * 35;
+    let sx2 = 0, sy2 = 0;
+    if (lp >= 0.92) { sx2 = Math.sin(tick * 0.9) * 2; sy2 = Math.cos(tick * 1.1) * 1.5; }
+    drawSprite(bathKey, bxx + sx2, byy + sy2, bw, bh);
+    return;
+  }
+
+  let liftKey;
+  if (lp < 0.25)      liftKey = "lift_low";
+  else if (lp < 0.55) liftKey = "lift_mid";
+  else if (lp < 0.92) liftKey = "lift_high";
+  else                liftKey = "lift_strain";
+  if (lp >= 0.92 && Math.floor(tick / 4) % 2 === 0) liftKey = "lift_high";
+
+  // FALLBACK gdy sprite'y lift_* nie sa zaladowane - rysuj zwykly idle + couch nad glowa
+  if (!images[liftKey]) {
+    drawSprite("player_idle", p.x - 6, p.y - 4, p.w + 12, p.h + 4, p.dir < 0);
+    if (boss && images.couch) {
+      const cw = boss.w, ch = boss.h;
+      const cx = p.x + p.w / 2 - cw / 2;
+      const cy = p.y - ch - 4 + (1 - lp) * 30;
+      drawSprite("couch", cx, cy, cw, ch);
+    }
+    return;
+  }
+
+  // sprite proporcje ~134x300, skala do gracza (28w, 44h)
+  // wysokosc calego sprite'a = 5x wysokosc gracza
+  const liftH = p.h * 5.5;
+  const liftW = liftH * (134 / 300);
+  // gracz w sprite'cie znajduje sie na dole (~stopy w dolnej krawedzi)
+  const liftX = p.x + p.w / 2 - liftW / 2;
+  const liftY = p.y + p.h - liftH;
+  // dygot
+  let shakeX = 0, shakeY = 0;
+  if (lp >= 0.92) {
+    shakeX = Math.sin(tick * 0.9) * 1.5;
+    shakeY = Math.cos(tick * 1.1) * 1;
+  }
+  drawSprite(liftKey, liftX + shakeX, liftY + shakeY, liftW, liftH, p.dir < 0);
+
+  // krople potu lecace na boki
+  if (lp > 0.6) {
+    const cx = p.x + p.w / 2;
+    ctx.fillStyle = "#9cf";
+    const t = tick * 0.4;
+    ctx.beginPath();
+    ctx.arc(cx - 26 + Math.sin(t) * 3, liftY + 40 + (t * 6) % 50, 2, 0, Math.PI * 2);
+    ctx.arc(cx + 26 + Math.cos(t) * 3, liftY + 50 + (t * 7) % 50, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // gwiazdki wysilku przy maksimum
+  if (lp >= 0.92) {
+    ctx.fillStyle = "#ffe066";
+    for (let i = 0; i < 3; i++) {
+      const a = tick * 0.1 + i * 2.1;
+      const sx = p.x + p.w / 2 + Math.cos(a) * 30;
+      const sy = liftY + 30 + Math.sin(a) * 10;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawFlag(f) {
+  const locked = boss && boss.alive;
+  // wieksze drzwi - 1.5x wyzsze niz oryginalne
+  const dw = f.w + 24;
+  const dh = f.h + 24;
+  const dx = f.x - 12;
+  const dy = f.y - 12;
+
+  // ramka muru wokol drzwi (ciemny brazowy framing)
+  ctx.fillStyle = "#2a1a08";
+  ctx.fillRect(dx - 6, dy - 6, dw + 12, dh + 12);
+  ctx.fillStyle = "#4a2c12";
+  ctx.fillRect(dx - 4, dy - 4, dw + 8, dh + 8);
+
+  // poswiata gdy odblokowane (pulsujaca)
+  if (!locked) {
+    const pulse = 0.6 + Math.sin(tick * 0.08) * 0.25;
+    const glow = ctx.createRadialGradient(dx + dw / 2, dy + dh / 2, 8, dx + dw / 2, dy + dh / 2, 130);
+    glow.addColorStop(0, `rgba(255,220,140,${0.55 * pulse})`);
+    glow.addColorStop(0.5, `rgba(255,180,80,${0.3 * pulse})`);
+    glow.addColorStop(1, "rgba(255,160,60,0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(dx - 60, dy - 60, dw + 120, dh + 120);
+  }
+
+  // drzwi - sprite
+  if (locked) ctx.filter = "brightness(0.45) saturate(0.4)";
+  drawSprite("door", dx, dy, dw, dh);
+  ctx.filter = "none";
+
+  if (locked) {
+    // ciemna mgla jakby zamkniete
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillRect(dx, dy, dw, dh);
+    // duza kladka zlota
+    const cx = dx + dw / 2, cy = dy + dh / 2;
+    ctx.fillStyle = "#3a2810";
+    ctx.fillRect(cx - 14, cy - 4, 28, 24);
+    ctx.fillStyle = "#e0b030";
+    ctx.fillRect(cx - 12, cy - 2, 24, 20);
+    ctx.fillStyle = "#c89020";
+    ctx.fillRect(cx - 9, cy + 4, 18, 12);
+    ctx.strokeStyle = "#3a2810";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(cx, cy - 4, 9, Math.PI, 2 * Math.PI);
+    ctx.stroke();
+    // dziurka od klucza
+    ctx.fillStyle = "#1a0a04";
+    ctx.beginPath();
+    ctx.arc(cx, cy + 8, 2, 0, Math.PI * 2);
+    ctx.fillRect(cx - 1, cy + 8, 2, 5);
+    ctx.fill();
+  } else {
+    // szczelina swiatla pod drzwiami
+    ctx.fillStyle = "rgba(255,200,120,0.7)";
+    ctx.fillRect(dx + 4, dy + dh - 6, dw - 8, 4);
+    // promienie wychodzace z drzwi
+    ctx.save();
+    ctx.translate(dx + dw / 2, dy + dh - 4);
+    for (let i = -2; i <= 2; i++) {
+      ctx.globalAlpha = 0.18 + Math.sin(tick * 0.05 + i) * 0.05;
+      ctx.fillStyle = "#fff0a0";
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(-4 + i * 6, 60);
+      ctx.lineTo(4 + i * 6, 60);
+      ctx.fill();
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  // tabliczka WYJSCIE / WOLNOSC nad drzwiami
+  ctx.fillStyle = locked ? "#3a2810" : "#5a3818";
+  ctx.fillRect(dx + dw / 2 - 36, dy - 22, 72, 16);
+  ctx.fillStyle = locked ? "#7a5a30" : "#ffb347";
+  ctx.font = "bold 10px monospace";
+  ctx.textAlign = "center";
+  if (!locked) {
+    ctx.shadowColor = "#ff7700";
+    ctx.shadowBlur = 4;
+  }
+  ctx.fillText(locked ? "ZAMKNIETE" : "WOLNOSC!", dx + dw / 2, dy - 10);
+  ctx.shadowBlur = 0;
+  ctx.textAlign = "start";
+}
+
+function drawBoss(b) {
+  if (!b.alive) {
+    if (b.kind === "bath") {
+      ctx.fillStyle = "rgba(0,0,0,0.4)";
+      ctx.beginPath();
+      ctx.ellipse(b.x + b.w / 2, b.y + b.h + 8, b.w * 0.45, 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+      drawSprite("bath_tongue", b.x, b.y + 6, b.w, b.h);
+    }
+    return;
+  }
+  // gdy gracz wycisniaja boss - nie rysuj zwyklej kanapy (sprite lift_* zawiera ja)
+  const lifting = player && player.state === "lift";
+  const bob = Math.sin(b.t) * 3;
+  if (!lifting) {
+    // cien pod kanapa
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.beginPath();
+    ctx.ellipse(b.x + b.w / 2, b.y + b.h + 6, b.w * 0.42, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // delikatna poswiata "wyzwania" wokol bossa
+    const aura = ctx.createRadialGradient(b.x + b.w / 2, b.y + b.h / 2, 10,
+                                          b.x + b.w / 2, b.y + b.h / 2, b.w * 0.7);
+    aura.addColorStop(0, "rgba(255,80,40,0.18)");
+    aura.addColorStop(1, "rgba(255,80,40,0)");
+    ctx.fillStyle = aura;
+    ctx.fillRect(b.x - 40, b.y - 30, b.w + 80, b.h + 60);
+    ctx.save();
+    if (b.hitFlash > 0 && b.hitFlash % 4 < 2) ctx.filter = "brightness(2.2)";
+    if (b.kind === "bath") {
+      const ratio = b.hp / b.hpMax;
+      let bk = "bath_low";
+      if (ratio <= 0.25) bk = "bath_strain";
+      else if (ratio <= 0.5) bk = "bath_high";
+      else if (ratio <= 0.75) bk = "bath_mid";
+      drawSprite(bk, b.x, b.y + bob, b.w, b.h);
+    } else {
+      drawSprite("couch", b.x, b.y + bob, b.w, b.h);
+    }
+    ctx.restore();
+    // znacznik nad bossem - strzalka wskazujaca ze trzeba podejsc
+    if (Math.floor(tick / 30) % 2 === 0) {
+      ctx.fillStyle = "#ffb347";
+      ctx.beginPath();
+      ctx.moveTo(b.x + b.w / 2 - 8, b.y - 30);
+      ctx.lineTo(b.x + b.w / 2 + 8, b.y - 30);
+      ctx.lineTo(b.x + b.w / 2,     b.y - 22);
+      ctx.fill();
+    }
+  }
+  // pasek HP nad bossem
+  const barW = b.w, barH = 8;
+  const bx = b.x, by = b.y - 14;
+  ctx.fillStyle = "rgba(0,0,0,0.7)";
+  ctx.fillRect(bx, by, barW, barH);
+  ctx.fillStyle = "#ff5544";
+  ctx.fillRect(bx + 2, by + 2, (barW - 4) * (b.hp / b.hpMax), barH - 4);
+  ctx.fillStyle = "#ffb347";
+  ctx.font = "bold 10px monospace";
+  ctx.textAlign = "center";
+  const blbl = b.kind === "bath" ? "WANNA - PODNIES " + b.hp + "x" : "BOSS - PODNIES " + b.hp + "x";
+  ctx.fillText(blbl, bx + barW / 2, by - 4);
+  ctx.textAlign = "start";
+}
+
+function drawProjectile(p) {
+  ctx.save();
+  ctx.translate(p.x + 12, p.y + 8);
+  ctx.rotate(p.rot);
+  ctx.fillStyle = "#d8dce0";
+  ctx.fillRect(-12, -8, 24, 16);
+  ctx.fillStyle = "#7a8088";
+  for (let i = 0; i < 3; i++) ctx.fillRect(-9 + i * 7, -5, 3, 10);
+  ctx.fillStyle = "#9098a0";
+  ctx.fillRect(-12, -8, 24, 2);
+  ctx.fillRect(-12, 6, 24, 2);
+  ctx.strokeStyle = "#5a6068";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-11.5, -7.5, 23, 15);
+  ctx.restore();
+  // smuga ruchu
+  ctx.strokeStyle = "rgba(180,180,180,0.4)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(p.x + 12 - p.vx * 2, p.y + 8 - p.vy * 2);
+  ctx.lineTo(p.x + 12, p.y + 8);
+  ctx.stroke();
+}
+
+function drawLightCones() {
+  // stozki swiatla z lamp
+  ctx.globalCompositeOperation = "lighter";
+  for (const d of decor) {
+    if (d.kind !== "lamp") continue;
+    const lx = d.x + 25, ly = d.y + 60;
+    const grad = ctx.createRadialGradient(lx, ly, 8, lx, ly, 240);
+    grad.addColorStop(0,    "rgba(255,200,120,0.18)");
+    grad.addColorStop(0.4,  "rgba(255,170,80,0.08)");
+    grad.addColorStop(1,    "rgba(255,140,60,0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(lx, ly, 240, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalCompositeOperation = "source-over";
+}
+
+function draw() {
+  drawBackground();
+
+  ctx.save();
+  // === TLO POKOJU - wolny parallax 0.1 (meble jakby stały w miejscu) ===
+  ctx.save();
+  ctx.translate(-Math.floor(camera.x * 0.1), -Math.floor(camera.y * 0.1));
+  const roomKinds = ["window", "poster", "couch", "coatrack", "plant", "pot", "boxes2", "boxes3"];
+  for (const d of decor) {
+    if (roomKinds.includes(d.kind)) drawDecor(d);
+  }
+  ctx.restore();
+
+  // === SCENA PIERWSZEGO PLANU - normalny camera 1.0 ===
+  ctx.translate(-Math.floor(camera.x), -Math.floor(camera.y));
+
+  // platformy / klocki
+  for (const s of solids) drawSolid(s);
+
+  // kolce (gameplay - musza pokrywac sie z platformami)
+  for (const d of decor) if (d.kind === "spikes") drawDecor(d);
+
+  // grzejniki (mozna podniesc i rzucic)
+  for (const d of decor) if (d.kind === "radiator") drawDecor(d);
+
+  // pociski (rzucone grzejniki)
+  for (const p of projectiles) drawProjectile(p);
+
+  // monety
+  for (const c of coins) if (!c.taken) drawCoin(c);
+
+  // wrogowie
+  for (const en of enemies) if (en.alive) drawEnemy(en);
+
+  // meta
+  if (flag) drawFlag(flag);
+
+  // boss
+  if (boss) drawBoss(boss);
+
+  // gracz
+  if (!dead) drawPlayer(player);
+
+  // swiatla
+  drawLightCones();
+
+  // delikatna winieta - bardzo subtelna w dzien
+  ctx.fillStyle = "rgba(40,20,5,0.05)";
+  ctx.fillRect(camera.x, camera.y, canvas.width, canvas.height);
+
+  ctx.restore();
+
+  drawHUD();
+
+  if (won) drawCenter("WOLNOSC! (R = restart)", "#ffb347");
+  else if (dead && lives <= 0) drawCenter("ZOSTALES W SALONIE (R = restart)", "#ff5544");
+}
+
+function drawHUD() {
+  ctx.fillStyle = "rgba(20,12,8,0.92)";
+  ctx.fillRect(0, 0, canvas.width, 36);
+  ctx.fillStyle = "#3a2410";
+  ctx.fillRect(0, 34, canvas.width, 2);
+
+  // serca
+  for (let i = 0; i < 3; i++) {
+    if (images.heart) {
+      ctx.globalAlpha = i < lives ? 1 : 0.25;
+      ctx.drawImage(images.heart, 10 + i * 26, 7, 22, 22);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // moneta + licznik
+  if (images.coin) ctx.drawImage(images.coin, 110, 8, 20, 20);
+
+  ctx.fillStyle = "#ffb347";
+  ctx.font = "bold 14px 'Courier New', monospace";
+  ctx.shadowColor = "#ff7700";
+  ctx.shadowBlur = 6;
+  ctx.fillText("x " + Math.floor(score / 50), 134, 23);
+  ctx.fillText("WYNIK: " + String(score).padStart(5, "0"), 220, 23);
+  // licznik grzejnikow (broni)
+  if (player) {
+    ctx.fillStyle = "#bcc0c8";
+    ctx.fillRect(385, 8, 14, 18);
+    ctx.fillStyle = "#7a8088";
+    ctx.fillRect(387, 10, 2, 14);
+    ctx.fillRect(391, 10, 2, 14);
+    ctx.fillRect(395, 10, 2, 14);
+    ctx.fillStyle = "#ffb347";
+    ctx.fillText("x " + player.weapon, 405, 23);
+  }
+  const levelLabel = currentLevel === 2 ? "SALON" : "WOJFEROWNIA";
+  ctx.fillText(levelLabel, canvas.width - 130, 23);
+  ctx.shadowBlur = 0;
+}
+
+function drawCenter(text, color) {
+  ctx.fillStyle = "rgba(0,0,0,0.78)";
+  ctx.fillRect(0, canvas.height / 2 - 30, canvas.width, 60);
+  ctx.fillStyle = color;
+  ctx.font = "bold 22px 'Courier New', monospace";
+  ctx.textAlign = "center";
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12;
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 8);
+  ctx.shadowBlur = 0;
+  ctx.textAlign = "start";
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// ===== SKALOWANIE CANVAS DO EKRANU =====
+function fitCanvas() {
+  const ratio = 800 / 480;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  let dw, dh;
+  if (w / h > ratio) {
+    dh = h; dw = h * ratio;
+  } else {
+    dw = w; dh = w / ratio;
+  }
+  canvas.style.width  = dw + "px";
+  canvas.style.height = dh + "px";
+}
+window.addEventListener("resize", fitCanvas);
+window.addEventListener("orientationchange", fitCanvas);
+fitCanvas();
+
+// ===== STEROWANIE DOTYKOWE =====
+function bindTouch(id, code) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const press   = e => { e.preventDefault(); keys[code] = true; };
+  const release = e => { e.preventDefault(); keys[code] = false; };
+  el.addEventListener("touchstart", press, { passive: false });
+  el.addEventListener("touchend",   release);
+  el.addEventListener("touchcancel",release);
+  el.addEventListener("mousedown",  press);
+  el.addEventListener("mouseup",    release);
+  el.addEventListener("mouseleave", release);
+}
+bindTouch("btn-left",  "ArrowLeft");
+bindTouch("btn-right", "ArrowRight");
+bindTouch("btn-jump",  "Space");
+bindTouch("btn-throw", "throwBtn");
+
+// restart - jednorazowy klik
+const btnR = document.getElementById("btn-restart");
+if (btnR) {
+  const fire = e => { e.preventDefault(); resetGame(); };
+  btnR.addEventListener("touchstart", fire, { passive: false });
+  btnR.addEventListener("click", fire);
+}
+
+// blokada gestow przegladarki na canvas
+canvas.addEventListener("touchstart", e => e.preventDefault(), { passive: false });
+canvas.addEventListener("touchmove",  e => e.preventDefault(), { passive: false });
+
+// blokada zoomowania dwumakniem (iOS)
+let lastTouch = 0;
+document.addEventListener("touchend", e => {
+  const now = Date.now();
+  if (now - lastTouch < 300) e.preventDefault();
+  lastTouch = now;
+}, { passive: false });
+
+loadAssets(() => { resetGame(); loop(); });
+</script>
+
+</body>
+</html>
