@@ -1116,7 +1116,7 @@ function drawPlayer(p) {
       drawSprite("player_idle", p.x - 6, p.y - 4, p.w + 12, p.h + 4, p.dir < 0);
     }
 
-    // wanna w miejscu kanapy - animowana wraz z lift phase
+    // wanna w miejscu kanapy w lift-sprite - pozycja zalezna od lift sprite (nie boss.baseY)
     let bathKey = "bath_low";
     if (lp < 0.25) bathKey = "bath_low";
     else if (lp < 0.55) bathKey = "bath_mid";
@@ -1124,8 +1124,9 @@ function drawPlayer(p) {
     else                bathKey = "bath_strain";
     const bw = boss.w, bh = boss.h;
     const bxx = p.x + p.w / 2 - bw / 2;
-    // wanna idzie w gore wraz z lift phase (jak kanapa w boss.y)
-    const bWorldY = boss.baseY - 55 * lp;
+    // wanna anchored to top of lift sprite (gdzie byla kanapa) - ruch przez zmiane pozy wojfera w sprite
+    // small additional movement w gore wraz z lift phase dla efektu wysilku
+    const bWorldY = liftYb + liftHb * 0.05 - 15 * lp;
     drawSprite(bathKey, bxx + shXb, bWorldY + shYb, bw, bh);
 
     // krople potu z gracza
