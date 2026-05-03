@@ -140,6 +140,10 @@ function loadAssets(cb) {
 // dekoracje: w okno, l lampa, o plakat HELP, x kartonyx2, y kartonyx3, t wieszak, p doniczka
 const TILE = 40;
 let currentLevel = 1; // 1 = wojferownia, 2 = salon
+let currentScreen = "menu"; // "menu" lub "game"
+let menuSelected = 0; // 0=START, 1=LEVEL
+let difficulty = "normal"; // "normal" (3 zycia) | "hard" (1 zycie)
+let menuT = 0;
 
 const MAP1 = [
   "................................................................................",
@@ -265,7 +269,23 @@ const camera = { x: 0, y: 0 };
 const keys = {};
 document.addEventListener("keydown", e => {
   keys[e.code] = true;
-  if (e.code === "KeyR") resetGame();
+  if (currentScreen === "menu") {
+    if (e.code === "ArrowUp" || e.code === "ArrowDown") {
+      menuSelected = 1 - menuSelected;
+      Audio.coin();
+    }
+    if (e.code === "Enter" || e.code === "Space") {
+      if (menuSelected === 0) {
+        startGame();
+      } else {
+        difficulty = (difficulty === "normal") ? "hard" : "normal";
+        Audio.coin();
+      }
+    }
+    e.preventDefault();
+    return;
+  }
+  if (e.code === "KeyR") showMenu();
 });
 document.addEventListener("keyup", e => keys[e.code] = false);
 
@@ -344,6 +364,10 @@ function moveAndCollide(e) {
 let tick = 0;
 function update() {
   tick++;
+  if (currentScreen === "menu") {
+    menuT++;
+    return;
+  }
   if (won || dead) return;
 
   if (player.state === "lift") {
@@ -573,7 +597,7 @@ function die() {
   lives--;
   Audio.die();
   setTimeout(() => {
-    if (lives <= 0) resetGame();
+    if (lives <= 0) showMenu();
     else respawn();
   }, 800);
 }
@@ -584,9 +608,22 @@ function respawn() {
   dead = false;
 }
 function resetGame() {
-  score = 0; lives = 3; won = false; dead = false;
+  score = 0;
+  lives = (difficulty === "hard") ? 1 : 3;
+  won = false; dead = false;
   projectiles = [];
   loadLevel(1);
+}
+
+function showMenu() {
+  currentScreen = "menu";
+  menuSelected = 0;
+  won = false; dead = false;
+}
+
+function startGame() {
+  currentScreen = "game";
+  resetGame();
 }
 
 function throwWeapon() {
@@ -1505,7 +1542,190 @@ function drawCenter(text, color) {
   ctx.textAlign = "start";
 }
 
+
+function drawMenu() {
+  // Ciemne tlo
+  const g = ctx.createRadialGradient(canvas.width/2, canvas.height/2, 50, canvas.width/2, canvas.height/2, 500);
+  g.addColorStop(0, "#1a0d05");
+  g.addColorStop(1, "#0a0608");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Tytul
+  ctx.save();
+  ctx.font = "bold 44px Courier New, monospace";
+  ctx.fillStyle = "#ffb347";
+  ctx.shadowColor = "rgba(255,140,40,0.7)";
+  ctx.shadowBlur = 18;
+  ctx.textAlign = "center";
+  ctx.fillText("WOJFEROWNIA", 480, 70);
+  ctx.font = "26px Courier New, monospace";
+  ctx.fillStyle = "#ff8c20";
+  ctx.shadowBlur = 12;
+  ctx.fillText("L E V E L  8 7", 480, 108);
+  ctx.restore();
+
+  ctx.strokeStyle = "rgba(255,179,71,0.6)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(330, 122); ctx.lineTo(630, 122);
+  ctx.stroke();
+
+  // Wojfer wycikajacy sztange w petli (animacja)
+  drawMenuWojfer();
+
+  // Opcje
+  const opts = [
+    { label: "> START", color: "#ffb347" },
+    { label: "LEVEL: " + (difficulty === "normal" ? "NORMAL" : "HARD"),
+      color: difficulty === "normal" ? "#ffd84d" : "#ff3333" }
+  ];
+  for (let i = 0; i < 2; i++) {
+    const x = 330, y = 200 + i * 90, w = 320, h = 64;
+    const sel = (i === menuSelected);
+    // ramka
+    ctx.fillStyle = sel ? "#1a0d05" : "#0d0604";
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = sel ? "#ffb347" : "#5a3818";
+    ctx.lineWidth = sel ? 3 : 1;
+    if (sel) {
+      ctx.shadowColor = "rgba(255,140,40,0.6)";
+      ctx.shadowBlur = 14;
+    }
+    ctx.strokeRect(x, y, w, h);
+    ctx.shadowBlur = 0;
+    // tekst
+    ctx.font = "bold 28px Courier New, monospace";
+    ctx.fillStyle = opts[i].color;
+    ctx.textAlign = "center";
+    let label = opts[i].label;
+    // pulsowanie wybranego
+    if (sel && Math.floor(menuT / 20) % 2 === 0) {
+      ctx.shadowColor = opts[i].color;
+      ctx.shadowBlur = 10;
+    }
+    ctx.fillText(label, x + w / 2, y + 41);
+    ctx.shadowBlur = 0;
+  }
+
+  // Hint sterowania
+  ctx.font = "13px Courier New, monospace";
+  ctx.fillStyle = "#5a3818";
+  ctx.textAlign = "center";
+  ctx.fillText("STRZALKI - WYBOR    ENTER - AKCEPT", 480, 410);
+  ctx.fillText("(klik / dotyk dziala tez)", 480, 432);
+
+  // Stopka
+  ctx.font = "11px Courier New, monospace";
+  ctx.fillStyle = "rgba(90,56,24,0.7)";
+  ctx.fillText("Wojfer 67  -  v0.3", 480, 460);
+}
+
+function drawMenuWojfer() {
+  // Animacja petla: low -> mid -> high -> strain -> high -> mid -> low -> ...
+  // okres: 8 klatek po ~12 ticow = 96 ticow
+  const PERIOD = 96;
+  const t = menuT % PERIOD;
+  const half = PERIOD / 2;
+  // 0..half = w gore, half..PERIOD = w dol
+  let lp;
+  if (t < half) lp = t / half;
+  else lp = (PERIOD - t) / half;
+
+  let liftKey;
+  if (lp < 0.25)      liftKey = "lift_low";
+  else if (lp < 0.55) liftKey = "lift_mid";
+  else if (lp < 0.92) liftKey = "lift_high";
+  else                liftKey = "lift_strain";
+  if (lp >= 0.92 && Math.floor(menuT / 4) % 2 === 0) liftKey = "lift_high";
+
+  const liftH = 380;
+  const liftW = liftH * (134 / 300);
+  const liftX = 80;
+  const liftY = 70;
+
+  if (images[liftKey]) {
+    // Cliping - ukryj kanape u gory sprite\'a (pierwsze 40%)
+    ctx.save();
+    const clipTop = liftY + liftH * 0.40;
+    ctx.beginPath();
+    ctx.rect(liftX - 20, clipTop, liftW + 40, liftH);
+    ctx.clip();
+    let shX = 0, shY = 0;
+    if (lp >= 0.92) { shX = Math.sin(menuT * 0.9) * 1.5; shY = Math.cos(menuT * 1.1) * 1; }
+    ctx.drawImage(images[liftKey], liftX + shX, liftY + shY, liftW, liftH);
+    ctx.restore();
+  }
+
+  // Sztanga w miejscu kanapy - rusza sie z lift phase
+  const barCenterX = liftX + liftW / 2;
+  const barY = liftY + liftH * 0.05 + (1 - lp) * 30;
+  drawBarbell(barCenterX, barY, lp);
+
+  // Drobne krople potu przy pelnym wycisniciu
+  if (lp > 0.7) {
+    ctx.fillStyle = "rgba(120,180,230,0.85)";
+    const t2 = menuT * 0.4;
+    ctx.beginPath();
+    ctx.arc(liftX + 10 + Math.sin(t2) * 3, liftY + 200 + (t2 * 6) % 80, 2.5, 0, Math.PI * 2);
+    ctx.arc(liftX + liftW - 10 + Math.cos(t2) * 3, liftY + 220 + (t2 * 7) % 80, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawBarbell(cx, cy, lp) {
+  // dygot przy max
+  let sh = 0;
+  if (lp >= 0.92) sh = Math.sin(menuT * 0.9) * 1.5;
+  cx += sh;
+
+  const barLen = 220;
+  const barH = 8;
+  // gryf
+  ctx.fillStyle = "#888888";
+  ctx.fillRect(cx - barLen/2, cy - barH/2, barLen, barH);
+  ctx.fillStyle = "#bbbbbb";
+  ctx.fillRect(cx - barLen/2, cy - barH/2 + 1, barLen, 2);
+  ctx.fillStyle = "#555555";
+  ctx.fillRect(cx - barLen/2, cy + barH/2 - 1, barLen, 1);
+
+  // Talerze - 2 z kazdej strony
+  const plateW = 14, plateH = 48;
+  for (let side of [-1, 1]) {
+    const baseX = cx + side * (barLen/2 - 4);
+    // zewnetrzny talerz (mniejszy, czerwony)
+    const outerX = baseX + side * 18;
+    ctx.fillStyle = "#a01818";
+    ctx.fillRect(outerX - plateW/2, cy - plateH/2, plateW, plateH);
+    ctx.fillStyle = "#cc2828";
+    ctx.fillRect(outerX - plateW/2 + 1, cy - plateH/2 + 1, plateW - 2, 4);
+    ctx.fillStyle = "#601010";
+    ctx.fillRect(outerX - plateW/2, cy + plateH/2 - 2, plateW, 2);
+    // wewnetrzny talerz (wiekszy, czarny)
+    const innerX = baseX;
+    const bigH = 60;
+    ctx.fillStyle = "#1a1a1a";
+    ctx.fillRect(innerX - plateW/2, cy - bigH/2, plateW, bigH);
+    ctx.fillStyle = "#3a3a3a";
+    ctx.fillRect(innerX - plateW/2 + 1, cy - bigH/2 + 1, plateW - 2, 5);
+    // refleks
+    ctx.fillStyle = "rgba(255,255,255,0.18)";
+    ctx.fillRect(innerX - plateW/2 + 2, cy - bigH/2 + 6, 2, bigH - 12);
+  }
+
+  // pasek na koncu gryfu
+  ctx.fillStyle = "#666666";
+  ctx.fillRect(cx - barLen/2 - 2, cy - barH/2 - 2, 2, barH + 4);
+  ctx.fillRect(cx + barLen/2, cy - barH/2 - 2, 2, barH + 4);
+}
+
 function loop() {
+  if (currentScreen === "menu") {
+    update();
+    drawMenu();
+    requestAnimationFrame(loop);
+    return;
+  }
   update();
   draw();
   requestAnimationFrame(loop);
@@ -1567,7 +1787,49 @@ document.addEventListener("touchend", e => {
   lastTouch = now;
 }, { passive: false });
 
-loadAssets(() => { resetGame(); loop(); });
+
+canvas.addEventListener("click", (e) => {
+  if (currentScreen !== "menu") return;
+  const rect = canvas.getBoundingClientRect();
+  const sx = canvas.width / rect.width;
+  const sy = canvas.height / rect.height;
+  const cx = (e.clientX - rect.left) * sx;
+  const cy = (e.clientY - rect.top) * sy;
+  // sprawdz czy klikniecie w opcje START
+  if (cx >= 330 && cx <= 650) {
+    if (cy >= 200 && cy <= 264) {
+      menuSelected = 0;
+      startGame();
+    } else if (cy >= 290 && cy <= 354) {
+      menuSelected = 1;
+      difficulty = (difficulty === "normal") ? "hard" : "normal";
+      Audio.coin();
+    }
+  }
+});
+canvas.addEventListener("touchstart", (e) => {
+  if (currentScreen !== "menu") return;
+  const rect = canvas.getBoundingClientRect();
+  const sx = canvas.width / rect.width;
+  const sy = canvas.height / rect.height;
+  const t = e.touches[0];
+  const cx = (t.clientX - rect.left) * sx;
+  const cy = (t.clientY - rect.top) * sy;
+  if (cx >= 330 && cx <= 650) {
+    if (cy >= 200 && cy <= 264) {
+      menuSelected = 0;
+      startGame();
+      e.preventDefault();
+    } else if (cy >= 290 && cy <= 354) {
+      menuSelected = 1;
+      difficulty = (difficulty === "normal") ? "hard" : "normal";
+      Audio.coin();
+      e.preventDefault();
+    }
+  }
+}, { passive: false });
+
+loadAssets(() => { showMenu(); loop(); });
 </script>
 
 </body>
