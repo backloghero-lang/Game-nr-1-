@@ -1606,6 +1606,10 @@ function drawMenu() {
     }
     ctx.fillText(label, x + w / 2, y + 41);
     ctx.shadowBlur = 0;
+    // wskaznik - mala sztanga po prawej dla wybranej opcji
+    if (sel) {
+      drawCursorBarbell(x + w + 50, y + h / 2, menuT);
+    }
   }
 
   // Hint sterowania
@@ -1615,10 +1619,6 @@ function drawMenu() {
   ctx.fillText("STRZALKI - WYBOR    ENTER - AKCEPT", 480, 410);
   ctx.fillText("(klik / dotyk dziala tez)", 480, 432);
 
-  // Stopka
-  ctx.font = "11px Courier New, monospace";
-  ctx.fillStyle = "rgba(90,56,24,0.7)";
-  ctx.fillText("Wojfer 67  -  v0.3", 480, 460);
 }
 
 function drawMenuWojfer() {
@@ -1645,22 +1645,10 @@ function drawMenuWojfer() {
   const liftY = 70;
 
   if (images[liftKey]) {
-    // Cliping - ukryj kanape u gory sprite\'a (pierwsze 40%)
-    ctx.save();
-    const clipTop = liftY + liftH * 0.40;
-    ctx.beginPath();
-    ctx.rect(liftX - 20, clipTop, liftW + 40, liftH);
-    ctx.clip();
     let shX = 0, shY = 0;
     if (lp >= 0.92) { shX = Math.sin(menuT * 0.9) * 1.5; shY = Math.cos(menuT * 1.1) * 1; }
     ctx.drawImage(images[liftKey], liftX + shX, liftY + shY, liftW, liftH);
-    ctx.restore();
   }
-
-  // Sztanga w miejscu kanapy - rusza sie z lift phase
-  const barCenterX = liftX + liftW / 2;
-  const barY = liftY + liftH * 0.05 + (1 - lp) * 30;
-  drawBarbell(barCenterX, barY, lp);
 
   // Drobne krople potu przy pelnym wycisniciu
   if (lp > 0.7) {
@@ -1673,50 +1661,44 @@ function drawMenuWojfer() {
   }
 }
 
-function drawBarbell(cx, cy, lp) {
-  // dygot przy max
-  let sh = 0;
-  if (lp >= 0.92) sh = Math.sin(menuT * 0.9) * 1.5;
-  cx += sh;
+function drawCursorBarbell(cx, cy, t) {
+  // Mala sztanga jako wskaznik - lata gora-dol
+  const cycle = (t % 60) / 60; // 0..1
+  const phase = cycle < 0.5 ? cycle * 2 : (1 - cycle) * 2; // 0->1->0
+  const yOff = -phase * 8;
+  cy += yOff;
 
-  const barLen = 220;
-  const barH = 8;
+  const barLen = 70;
+  const barH = 4;
   // gryf
   ctx.fillStyle = "#888888";
   ctx.fillRect(cx - barLen/2, cy - barH/2, barLen, barH);
   ctx.fillStyle = "#bbbbbb";
-  ctx.fillRect(cx - barLen/2, cy - barH/2 + 1, barLen, 2);
-  ctx.fillStyle = "#555555";
-  ctx.fillRect(cx - barLen/2, cy + barH/2 - 1, barLen, 1);
+  ctx.fillRect(cx - barLen/2, cy - barH/2, barLen, 1);
 
-  // Talerze - 2 z kazdej strony
-  const plateW = 14, plateH = 48;
+  // Talerze: 1 czarny + 1 czerwony z kazdej strony
+  const plateH = 18;
+  const plateW = 6;
   for (let side of [-1, 1]) {
-    const baseX = cx + side * (barLen/2 - 4);
-    // zewnetrzny talerz (mniejszy, czerwony)
-    const outerX = baseX + side * 18;
-    ctx.fillStyle = "#a01818";
-    ctx.fillRect(outerX - plateW/2, cy - plateH/2, plateW, plateH);
-    ctx.fillStyle = "#cc2828";
-    ctx.fillRect(outerX - plateW/2 + 1, cy - plateH/2 + 1, plateW - 2, 4);
-    ctx.fillStyle = "#601010";
-    ctx.fillRect(outerX - plateW/2, cy + plateH/2 - 2, plateW, 2);
-    // wewnetrzny talerz (wiekszy, czarny)
-    const innerX = baseX;
-    const bigH = 60;
+    const baseX = cx + side * (barLen/2 - 2);
+    // czarny wewnetrzny
     ctx.fillStyle = "#1a1a1a";
-    ctx.fillRect(innerX - plateW/2, cy - bigH/2, plateW, bigH);
+    ctx.fillRect(baseX - plateW/2, cy - plateH/2, plateW, plateH);
     ctx.fillStyle = "#3a3a3a";
-    ctx.fillRect(innerX - plateW/2 + 1, cy - bigH/2 + 1, plateW - 2, 5);
-    // refleks
-    ctx.fillStyle = "rgba(255,255,255,0.18)";
-    ctx.fillRect(innerX - plateW/2 + 2, cy - bigH/2 + 6, 2, bigH - 12);
+    ctx.fillRect(baseX - plateW/2 + 1, cy - plateH/2 + 1, plateW - 2, 3);
+    // czerwony zewnetrzny - mniejszy
+    const outerX = baseX + side * 7;
+    const smH = 12;
+    ctx.fillStyle = "#a01818";
+    ctx.fillRect(outerX - plateW/2, cy - smH/2, plateW, smH);
+    ctx.fillStyle = "#cc2828";
+    ctx.fillRect(outerX - plateW/2 + 1, cy - smH/2 + 1, plateW - 2, 2);
   }
 
   // pasek na koncu gryfu
   ctx.fillStyle = "#666666";
-  ctx.fillRect(cx - barLen/2 - 2, cy - barH/2 - 2, 2, barH + 4);
-  ctx.fillRect(cx + barLen/2, cy - barH/2 - 2, 2, barH + 4);
+  ctx.fillRect(cx - barLen/2 - 1, cy - barH/2 - 1, 1, barH + 2);
+  ctx.fillRect(cx + barLen/2, cy - barH/2 - 1, 1, barH + 2);
 }
 
 function loop() {
